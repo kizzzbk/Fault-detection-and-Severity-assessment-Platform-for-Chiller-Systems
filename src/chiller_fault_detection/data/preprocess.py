@@ -12,11 +12,11 @@ Pipeline
 
 from __future__ import annotations
 
-import argparse
 import json
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
+
 
 import joblib
 import pandas as pd
@@ -45,7 +45,6 @@ REQUIRED_COLUMNS: list[str] = [
 
 SPLIT_COLUMN = "split"
 
-
 @dataclass
 class PreprocessReport:
     n_rows_total: int = 0
@@ -69,8 +68,7 @@ class PreprocessReport:
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
-
-def load_processed_dataset(path: Path | None = None) -> pd.DataFrame:
+def load_dataset(path: Path | None = None) -> pd.DataFrame:
     """Read parquet with a light schema check (not full load.validate_dataset)."""
     path = path or DATASET_PARQUET
     if not path.is_file():
@@ -105,7 +103,7 @@ def sort_within_files(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
-def assign_time_splits(
+def time_splits(
     df: pd.DataFrame,
     *,
     train_ratio: float = TRAIN_RATIO,
@@ -136,19 +134,14 @@ def assign_time_splits(
             )
         n_train = int(n * train_ratio)
         n_val = int(n * val_ratio)
-        # Ensure each split gets at least one row when n >= 3.
         n_train = max(n_train, 1)
         n_val = max(n_val, 1)
-        if n_train + n_val >= n:
-            n_train = max(1, n - 2)
-            n_val = 1
         n_test = n - n_train - n_val
 
         positions = list(idx)
         train_idx = positions[:n_train]
         val_idx = positions[n_train : n_train + n_val]
         test_idx = positions[n_train + n_val :]
-        assert len(test_idx) == n_test
 
         split_labels.loc[train_idx] = "train"
         split_labels.loc[val_idx] = "val"
@@ -161,7 +154,7 @@ def assign_time_splits(
 def partition_by_split(df: pd.DataFrame) -> dict[str, pd.DataFrame]:
     """Split a DataFrame that already has a ``split`` column into three frames."""
     if SPLIT_COLUMN not in df.columns:
-        raise ValueError(f"Expected column {SPLIT_COLUMN!r} from assign_time_splits.")
+        raise ValueError(f"Expected column {SPLIT_COLUMN!r} from time_splits.")
 
     parts: dict[str, pd.DataFrame] = {}
     for name in ("train", "val", "test"):
@@ -170,6 +163,24 @@ def partition_by_split(df: pd.DataFrame) -> dict[str, pd.DataFrame]:
         if parts[name].empty:
             raise ValueError(f"Split {name!r} is empty after time partitioning.")
     return parts
+
+
+def split_xy(
+    df: pd.DataFrame,
+    target: Literal["fault", "severity", "both"] = "both",
+) -> (
+    tuple[pd.DataFrame, pd.Series]
+    | tuple[pd.DataFrame, pd.Series, pd.Series]
+):
+    """Split features vs hierarchical targets. Does **not** train/test-split."""
+    X = df.loc[:, FEATURE_COLUMNS].copy()
+    if target == "fault":
+        return X, df["fault_id"].copy()
+    if target == "severity":
+        return X, df["severity_level"].copy()
+    if target == "both":
+        return X, df["fault_id"].copy(), df["severity_level"].copy()
+    raise ValueError("target must be 'fault', 'severity', or 'both'")
 
 
 def make_xy_splits(
@@ -307,9 +318,9 @@ def run_preprocess(
     out_dir: Path | None = None,
 ) -> PreprocessReport:
     """Full preprocess orchestration."""
-    df = load_processed_dataset(dataset_path)
+    df = load_dataset(dataset_path)
     df = sort_within_files(df)
-    df = assign_time_splits(
+    df = time_splits(
         df,
         train_ratio=train_ratio,
         val_ratio=val_ratio,
@@ -342,38 +353,3 @@ def run_preprocess(
         out_dir=out_dir,
     )
     return report
-
-
-def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--dataset", type=Path, default=None)
-    parser.add_argument("--out-dir", type=Path, default=None)
-    parser.add_argument("--train-ratio", type=float, default=TRAIN_RATIO)
-    parser.add_argument("--val-ratio", type=float, default=VAL_RATIO)
-    parser.add_argument("--test-ratio", type=float, default=TEST_RATIO)
-    args = parser.parse_args()
-
-    report = run_preprocess(
-        args.dataset,
-        train_ratio=args.train_ratio,
-        val_ratio=args.val_ratio,
-        test_ratio=args.test_ratio,
-        out_dir=args.out_dir,
-    )
-    print(
-        json.dumps(
-            {
-                "n_rows_train": report.n_rows_train,
-                "n_rows_val": report.n_rows_val,
-                "n_rows_test": report.n_rows_test,
-                "n_files": report.n_files,
-                "fault_counts_train": report.fault_counts_train,
-                "path_label_counts_test": report.path_label_counts_test,
-            },
-            indent=2,
-        )
-    )
-
-
-if __name__ == "__main__":
-    main()
