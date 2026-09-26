@@ -4,11 +4,11 @@ from chiller_fault_detection.data.load import (
     LoadReport,
     load_dataset,
     save_parquet,
-    split_xy,
 )
 from chiller_fault_detection.data.preprocess import (
     PreprocessReport,
     run_preprocess,
+    split_xy,
 )
 
 __all__ = [

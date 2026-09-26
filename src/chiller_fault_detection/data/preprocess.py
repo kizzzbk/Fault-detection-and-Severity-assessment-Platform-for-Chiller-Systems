@@ -31,7 +31,7 @@ from chiller_fault_detection.config import (
     TRAIN_RATIO,
     VAL_RATIO,
 )
-from chiller_fault_detection.data.load import FEATURE_COLUMNS, split_xy
+from chiller_fault_detection.data.load import FEATURE_COLUMNS
 
 REQUIRED_COLUMNS: list[str] = [
     "source_file",
