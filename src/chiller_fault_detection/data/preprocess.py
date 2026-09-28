@@ -5,8 +5,9 @@ Pipeline
 1. Load ``dataset.parquet`` (light schema check only; full validation is in load).
 2. Sort rows by ``time`` within each ``source_file``.
 3. Assign train/val/test by **time order inside each file** (default 70/15/15).
-4. Partition into three DataFrames; split X / y via ``load.split_xy``.
-5. Fit ``StandardScaler`` on train only; transform val/test.
+4. Partition into three DataFrames. ``X`` keeps metadata and features; ``y`` holds labels.
+5. Fit ``StandardScaler`` on train feature columns only; write scaled values back
+   without dropping metadata.
 6. Save split artifacts under ``artifacts/processed/splits/``.
 """
 
@@ -172,8 +173,7 @@ def split_xy(
     tuple[pd.DataFrame, pd.Series]
     | tuple[pd.DataFrame, pd.Series, pd.Series]
 ):
-    """Split features vs hierarchical targets. Does **not** train/test-split."""
-    X = df.loc[:, FEATURE_COLUMNS].copy()
+    X = df.copy()
     if target == "fault":
         return X, df["fault_id"].copy()
     if target == "severity":
@@ -213,16 +213,23 @@ def fit_transform_scaler(
     X_val: pd.DataFrame,
     X_test: pd.DataFrame,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, StandardScaler]:
-    """Fit StandardScaler on train only; transform all three splits."""
+    """Fit StandardScaler on train feature columns; keep every other column."""
     scaler = StandardScaler()
     train_arr = scaler.fit_transform(X_train[FEATURE_COLUMNS])
     val_arr = scaler.transform(X_val[FEATURE_COLUMNS])
     test_arr = scaler.transform(X_test[FEATURE_COLUMNS])
 
-    X_train_s = pd.DataFrame(train_arr, columns=FEATURE_COLUMNS, index=X_train.index)
-    X_val_s = pd.DataFrame(val_arr, columns=FEATURE_COLUMNS, index=X_val.index)
-    X_test_s = pd.DataFrame(test_arr, columns=FEATURE_COLUMNS, index=X_test.index)
-    return X_train_s, X_val_s, X_test_s, scaler
+    def _with_scaled(frame: pd.DataFrame, values) -> pd.DataFrame:
+        out = frame.copy()
+        out[FEATURE_COLUMNS] = values
+        return out
+
+    return (
+        _with_scaled(X_train, train_arr),
+        _with_scaled(X_val, val_arr),
+        _with_scaled(X_test, test_arr),
+        scaler,
+    )
 
 
 def build_preprocess_report(

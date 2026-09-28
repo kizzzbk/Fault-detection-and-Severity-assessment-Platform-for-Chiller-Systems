@@ -2,27 +2,20 @@
 
 from __future__ import annotations
 
-import argparse
 import logging
 from dataclasses import dataclass
 from pathlib import Path
 
-import joblib
 import numpy as np
+import pandas as pd
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from sklearn.metrics import accuracy_score, classification_report, f1_score
 from torch.utils.data import DataLoader, Dataset
 
-from chiller_fault_detection.config import RANDOM_SEED, SCALER_PATH, SPLITS_DIR
+from chiller_fault_detection.config import RANDOM_SEED, SPLITS_DIR
 from chiller_fault_detection.data.load import FEATURE_COLUMNS
-from chiller_fault_detection.data.preprocess import (
-    load_dataset,
-    partition_by_split,
-    sort_within_files,
-    time_splits,
-)
 from chiller_fault_detection.labels import ID_TO_LABEL
 from chiller_fault_detection.models.TC import TC
 from chiller_fault_detection.models.augmentations import DataTransform
@@ -140,15 +133,22 @@ def window_part(frame, window: int, stride: int) -> tuple[np.ndarray, np.ndarray
 
 
 def load_window_splits(config: TrainConfig) -> dict[str, tuple[np.ndarray, np.ndarray]]:
-    df = sort_within_files(load_dataset())
-    df = time_splits(df)
-    parts = partition_by_split(df)
-    scaler = joblib.load(SCALER_PATH)
+    """Load scaled splits and cut windows. Metadata is used only to group rows."""
+    needed = ["source_file", "fault_id", *FEATURE_COLUMNS]
     splits = {}
-    for name, part in parts.items():
-        scaled = part.copy()
-        scaled.loc[:, FEATURE_COLUMNS] = scaler.transform(part.loc[:, FEATURE_COLUMNS])
-        splits[name] = window_part(scaled, config.window, config.stride_windows)
+    for name in ("train", "val", "test"):
+        parquet_path = SPLITS_DIR / f"X_{name}.parquet"
+        csv_path = SPLITS_DIR / f"X_{name}.csv"
+        if parquet_path.is_file():
+            frame = pd.read_parquet(parquet_path)
+        elif csv_path.is_file():
+            frame = pd.read_csv(csv_path)
+        else:
+            raise FileNotFoundError(f"Split frame not found: {parquet_path} (or {csv_path})")
+        missing = [column for column in needed if column not in frame.columns]
+        if missing:
+            raise ValueError(f"X_{name} is missing columns needed to window: {missing}")
+        splits[name] = window_part(frame, config.window, config.stride_windows)
     return splits
 
 
@@ -204,11 +204,6 @@ def stratified_indices(y: np.ndarray, fraction: float, seed: int) -> np.ndarray:
         n_take = min(len(idx), max(1, int(round(len(idx) * fraction))))
         chosen.append(rng.choice(idx, size=n_take, replace=False))
     return np.sort(np.concatenate(chosen))
-
-
-def _unfreeze(model) -> None:
-    for param in model.parameters():
-        param.requires_grad = True
 
 
 def pseudo_labels(model, x: np.ndarray, device: torch.device, batch_size: int) -> np.ndarray:
@@ -411,18 +406,7 @@ def run(config: TrainConfig, out_dir: Path, device: torch.device) -> None:
     train_dl, valid_dl, test_dl = make_loaders(splits, config, "self_supervised")
     model_opt, temporal_opt = _optimizers(model, temporal, config)
     LOGGER.info("Self-supervised pretraining")
-    Trainer(
-        model,
-        temporal,
-        model_opt,
-        temporal_opt,
-        train_dl,
-        valid_dl,
-        device,
-        config,
-        "self_supervised",
-        config.num_epoch,
-    )
+    Trainer(model,temporal,model_opt, temporal_opt,train_dl,valid_dl,device,config,"self_supervised",config.num_epoch)
 
     checkpoint = {
         "model_state_dict": model.state_dict(),
@@ -442,18 +426,7 @@ def run(config: TrainConfig, out_dir: Path, device: torch.device) -> None:
     train_dl, valid_dl, test_dl = make_loaders(splits, config, "train_linear")
     model_opt, temporal_opt = _optimizers(model, temporal, config)
     LOGGER.info("Linear classifier on frozen encoder")
-    Trainer(
-        model,
-        temporal,
-        model_opt,
-        temporal_opt,
-        train_dl,
-        valid_dl,
-        device,
-        config,
-        "train_linear",
-        config.linear_epoch,
-    )
+    Trainer(model,temporal,model_opt,temporal_opt,train_dl,valid_dl,device,config,"train_linear",config.linear_epoch)
 
     _, _, val_pred, val_true = model_evaluate(
         model, temporal, valid_dl, device, "train_linear"
@@ -483,25 +456,27 @@ def run_ca_tcc(config: TrainConfig, out_dir: Path, device: torch.device, label_f
     model = base_Model(config).to(device)
     temporal = TC(config, device).to(device)
 
+    #CA-TCC Stage 1: Pretrain self-supervised on all training windows
     train_dl, valid_dl, test_dl = make_loaders(splits, config, "self_supervised")
     model_opt, temporal_opt = _optimizers(model, temporal, config)
     LOGGER.info("CA-TCC stage 1: self-supervised pretraining")
     Trainer(model, temporal, model_opt, temporal_opt, train_dl, valid_dl, device, config, "self_supervised", config.num_epoch)
     torch.save({"model_state_dict": model.state_dict()}, out_dir / "ckp_ssl.pt")
 
-    _unfreeze(model)
+    #CA-TCC Stage 2: Finetune supervised with fractions of windows with labels
     train_dl, valid_dl, test_dl = make_loaders(splits, config, "ft_1p", train_xy=few_xy, batch_size=16)
     model_opt, temporal_opt = _optimizers(model, temporal, config)
     LOGGER.info("CA-TCC stage 2: fine-tune on %.0f%% labels", label_fraction * 100)
     Trainer(model, temporal, model_opt, temporal_opt, train_dl, valid_dl, device, config, "ft_1p", config.linear_epoch)
     torch.save({"model_state_dict": model.state_dict()}, out_dir / "ckp_ft.pt")
 
+    #CA-TCC Stage 3: Use finetuned model to pseudo labels the rest of the training windows
     y_pseudo = pseudo_labels(model, x_train, device, config.batch_size)
     agree = float((y_pseudo == y_train).mean())
     LOGGER.info("CA-TCC stage 3: pseudo labels agree with true labels on %.3f of train", agree)
     np.save(out_dir / "pseudo_labels.npy", y_pseudo)
 
-    _unfreeze(model)
+    #CA-TCC Stage 4: Continue finetune constrative learning with pseudo labels 
     train_dl, valid_dl, test_dl = make_loaders(
         splits, config, "SupCon", train_xy=(x_train, y_pseudo)
     )
@@ -510,6 +485,7 @@ def run_ca_tcc(config: TrainConfig, out_dir: Path, device: torch.device, label_f
     Trainer(model, temporal, model_opt, temporal_opt, train_dl, valid_dl, device, config, "SupCon", config.num_epoch)
     torch.save({"model_state_dict": model.state_dict()}, out_dir / "ckp_supcon.pt")
 
+    #CA-TCC Stage 5: Freeze the encoder and train the final linear layer
     _freeze_encoder(model)
     train_dl, valid_dl, test_dl = make_loaders(
         splits, config, "train_linear", train_xy=few_xy, batch_size=16
@@ -530,36 +506,3 @@ def run_ca_tcc(config: TrainConfig, out_dir: Path, device: torch.device, label_f
     report_path.write_text(report)
     torch.save({"model_state_dict": model.state_dict()}, out_dir / "linear_head.pt")
     LOGGER.info("Wrote report → %s", report_path)
-
-
-def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--epochs", type=int, default=20)
-    parser.add_argument("--linear-epochs", type=int, default=20)
-    parser.add_argument("--batch-size", type=int, default=128)
-    parser.add_argument("--window", type=int, default=128)
-    parser.add_argument("--stride", type=int, default=64)
-    parser.add_argument("--method", choices=("ts-tcc", "ca-tcc"), default="ts-tcc")
-    parser.add_argument("--label-fraction", type=float, default=0.01)
-    parser.add_argument("--out-dir", type=Path, default=None)
-    parser.add_argument("--device", type=str, default=None)
-    args = parser.parse_args()
-
-    logging.basicConfig(level=logging.INFO, format="%(message)s")
-    device_name = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
-    out_dir = args.out_dir or (SPLITS_DIR.parent / ("ca_tcc" if args.method == "ca-tcc" else "ts_tcc"))
-    config = TrainConfig(
-        num_epoch=args.epochs,
-        linear_epoch=args.linear_epochs,
-        batch_size=args.batch_size,
-        window=args.window,
-        stride_windows=args.stride,
-    )
-    if args.method == "ca-tcc":
-        run_ca_tcc(config, out_dir, torch.device(device_name), args.label_fraction)
-    else:
-        run(config, out_dir, torch.device(device_name))
-
-
-if __name__ == "__main__":
-    main()
