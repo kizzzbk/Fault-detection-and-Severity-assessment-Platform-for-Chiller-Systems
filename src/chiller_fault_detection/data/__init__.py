@@ -1,5 +1,6 @@
 from chiller_fault_detection.data.load import (
     FEATURE_COLUMNS,
+    MODEL_FEATURE_COLUMNS,
     METADATA_COLUMNS,
     LoadReport,
     load_dataset,
@@ -13,6 +14,7 @@ from chiller_fault_detection.data.preprocess import (
 
 __all__ = [
     "FEATURE_COLUMNS",
+    "MODEL_FEATURE_COLUMNS",
     "METADATA_COLUMNS",
     "LoadReport",
     "PreprocessReport",

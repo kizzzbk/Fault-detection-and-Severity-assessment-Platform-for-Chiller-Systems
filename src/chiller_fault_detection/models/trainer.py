@@ -15,7 +15,7 @@ from sklearn.metrics import accuracy_score, classification_report, f1_score
 from torch.utils.data import DataLoader, Dataset
 
 from chiller_fault_detection.config import RANDOM_SEED, SPLITS_DIR
-from chiller_fault_detection.data.load import FEATURE_COLUMNS
+from chiller_fault_detection.data.load import MODEL_FEATURE_COLUMNS
 from chiller_fault_detection.labels import ID_TO_LABEL
 from chiller_fault_detection.models.TC import TC
 from chiller_fault_detection.models.augmentations import DataTransform
@@ -27,10 +27,11 @@ LOGGER = logging.getLogger("ts_tcc")
 
 @dataclass
 class AugmentConfig:
-    # Standardized features: keep jitter small (paper, Section 3.1).
+    # Weak view jitters then scales; strong view permutes then jitters.
+    # Scale/jitter match the HAR config in the TS-TCC repo (sigma 1.1 and 0.8).
     weak_jitter_ratio: float = 0.05
-    jitter_scale_ratio: float = 0.1
-    jitter_ratio: float = 0.08
+    jitter_scale_ratio: float = 1.1
+    jitter_ratio: float = 0.8
     max_seg: int = 8
 
 
@@ -48,7 +49,7 @@ class TemporalConfig:
 
 @dataclass
 class TrainConfig:
-    input_channels: int = len(FEATURE_COLUMNS)
+    input_channels: int = len(MODEL_FEATURE_COLUMNS)
     kernel_size: int = 8
     stride: int = 1
     final_out_channels: int = 128
@@ -120,7 +121,7 @@ def window_part(frame, window: int, stride: int) -> tuple[np.ndarray, np.ndarray
     xs: list[np.ndarray] = []
     ys: list[int] = []
     for _, group in frame.groupby("source_file", sort=False):
-        values = group.loc[:, FEATURE_COLUMNS].to_numpy(dtype=np.float32)
+        values = group.loc[:, MODEL_FEATURE_COLUMNS].to_numpy(dtype=np.float32)
         label = int(group["fault_id"].iloc[0])
         if len(values) < window:
             continue
@@ -134,7 +135,7 @@ def window_part(frame, window: int, stride: int) -> tuple[np.ndarray, np.ndarray
 
 def load_window_splits(config: TrainConfig) -> dict[str, tuple[np.ndarray, np.ndarray]]:
     """Load scaled splits and cut windows. Metadata is used only to group rows."""
-    needed = ["source_file", "fault_id", *FEATURE_COLUMNS]
+    needed = ["source_file", "fault_id", *MODEL_FEATURE_COLUMNS]
     splits = {}
     for name in ("train", "val", "test"):
         parquet_path = SPLITS_DIR / f"X_{name}.parquet"

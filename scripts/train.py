@@ -12,7 +12,7 @@ from chiller_fault_detection.models.trainer import TrainConfig, run, run_ca_tcc
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--epochs", type=int, default=20)
+    parser.add_argument("--epochs", type=int, default=40)
     parser.add_argument("--linear-epochs", type=int, default=20)
     parser.add_argument("--batch-size", type=int, default=128)
     parser.add_argument("--window", type=int, default=128)

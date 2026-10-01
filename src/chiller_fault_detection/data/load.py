@@ -61,6 +61,34 @@ FEATURE_COLUMNS: list[str] = [
     "FWE",
 ]
 
+# Group 1: experimental knobs. Used only as inputs to residual f_c.
+OPERATING_COLUMNS: list[str] = ["TEO", "TCI", "kW"]
+
+# Groups 2+3: residualize against OPERATING_COLUMNS (fit on train ∩ normal).
+RESIDUAL_COLUMNS: list[str] = [
+    "TEI",
+    "TCO",
+    "TRE",
+    "T_suc",
+    "Tsh_suc",
+    "Tsh_dis",
+    "PRE",
+    "TRC",
+    "TRC_sub",
+    "TR_dis",
+    "TEA",
+    "TCA",
+    "PRC",
+    "P_lift",
+    "TO_sump",
+]
+
+# Group 4: keep raw; not residualized.
+KEEP_RAW_COLUMNS: list[str] = ["FWE", "FWC", "PO_net", "PO_feed"]
+
+# Columns written into model-ready X after residual + drop knobs (19).
+MODEL_FEATURE_COLUMNS: list[str] = [*RESIDUAL_COLUMNS, *KEEP_RAW_COLUMNS]
+
 METADATA_COLUMNS: list[str] = [
     "source_file",
     "time",

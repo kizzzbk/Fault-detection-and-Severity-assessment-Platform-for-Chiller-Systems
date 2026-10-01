@@ -6,9 +6,10 @@ Pipeline
 2. Sort rows by ``time`` within each ``source_file``.
 3. Assign train/val/test by **time order inside each file** (default 70/15/15).
 4. Partition into three DataFrames. ``X`` keeps metadata and features; ``y`` holds labels.
-5. Fit ``StandardScaler`` on train feature columns only; write scaled values back
-   without dropping metadata.
-6. Save split artifacts under ``artifacts/processed/splits/``.
+5. Residualize groups 2+3: fit linear ``f_c(TEO, TCI, kW)`` on train∩normal,
+   subtract from train/val/test; drop the three knobs; keep group 4 raw.
+6. Fit ``StandardScaler`` on the 19 model columns (train only).
+7. Save split artifacts under ``artifacts/processed/splits/``.
 """
 
 from __future__ import annotations
@@ -21,10 +22,14 @@ from typing import Any, Literal
 
 import joblib
 import pandas as pd
+from sklearn.linear_model import LinearRegression
 from sklearn.preprocessing import StandardScaler
 
 from chiller_fault_detection.config import (
     DATASET_PARQUET,
+    KW_MAX,
+    KW_MIN,
+    RESIDUALIZER_PATH,
     SCALER_PATH,
     SPLIT_INFO_JSON,
     SPLITS_DIR,
@@ -32,7 +37,12 @@ from chiller_fault_detection.config import (
     TRAIN_RATIO,
     VAL_RATIO,
 )
-from chiller_fault_detection.data.load import FEATURE_COLUMNS
+from chiller_fault_detection.data.load import (
+    FEATURE_COLUMNS,
+    MODEL_FEATURE_COLUMNS,
+    OPERATING_COLUMNS,
+    RESIDUAL_COLUMNS,
+)
 
 REQUIRED_COLUMNS: list[str] = [
     "source_file",
@@ -58,7 +68,9 @@ class PreprocessReport:
     test_ratio: float = TEST_RATIO
     split_method: str = "time_within_file"
     scaler_type: str = "StandardScaler"
-    feature_columns: list[str] = field(default_factory=lambda: list(FEATURE_COLUMNS))
+    n_rows_dropped_kw: int = 0
+    n_residual_fit_rows: int = 0
+    feature_columns: list[str] = field(default_factory=lambda: list(MODEL_FEATURE_COLUMNS))
     fault_counts_train: dict[str, int] = field(default_factory=dict)
     fault_counts_val: dict[str, int] = field(default_factory=dict)
     fault_counts_test: dict[str, int] = field(default_factory=dict)
@@ -208,20 +220,80 @@ def make_xy_splits(
     return result
 
 
+def filter_kw_range(
+    df: pd.DataFrame,
+    *,
+    kw_min: float = KW_MIN,
+    kw_max: float = KW_MAX,
+) -> tuple[pd.DataFrame, int]:
+    """Keep rows with physically plausible running load. Before the time split."""
+    if "kW" not in df.columns:
+        raise ValueError("Expected column 'kW' for the load filter.")
+    mask = df["kW"].between(kw_min, kw_max, inclusive="both")
+    n_drop = int((~mask).sum())
+    return df.loc[mask].copy().reset_index(drop=True), n_drop
+
+
+@dataclass
+class Residualizer:
+    """Linear f_c(TEO, TCI, kW) for each residual column; sklearn multi-output OLS."""
+
+    operating_columns: list[str]
+    residual_columns: list[str]
+    model: LinearRegression
+    n_fit_rows: int = 0
+
+
+def fit_residualizer(X_train: pd.DataFrame) -> Residualizer:
+    """Fit on train rows with fault == normal only."""
+    needed = ["fault", *OPERATING_COLUMNS, *RESIDUAL_COLUMNS]
+    missing = [c for c in needed if c not in X_train.columns]
+    if missing:
+        raise ValueError(f"X_train missing columns for residual fit: {missing}")
+    normal = X_train.loc[X_train["fault"] == "normal"]
+    if len(normal) == 0:
+        raise ValueError("No normal rows in X_train to fit residualizer.")
+    model = LinearRegression()
+    model.fit(normal.loc[:, OPERATING_COLUMNS], normal.loc[:, RESIDUAL_COLUMNS])
+    return Residualizer(
+        operating_columns=list(OPERATING_COLUMNS),
+        residual_columns=list(RESIDUAL_COLUMNS),
+        model=model,
+        n_fit_rows=int(len(normal)),
+    )
+
+
+def apply_residualizer(X: pd.DataFrame, residualizer: Residualizer) -> pd.DataFrame:
+    """Overwrite residual columns with x - f(TEO, TCI, kW); drop the knobs."""
+    missing = [
+        c
+        for c in residualizer.operating_columns + residualizer.residual_columns
+        if c not in X.columns
+    ]
+    if missing:
+        raise ValueError(f"Frame missing columns for residual transform: {missing}")
+    out = X.copy()
+    pred = residualizer.model.predict(out.loc[:, residualizer.operating_columns])
+    out.loc[:, residualizer.residual_columns] = (
+        out.loc[:, residualizer.residual_columns].to_numpy() - pred
+    )
+    return out.drop(columns=list(residualizer.operating_columns))
+
+
 def fit_transform_scaler(
     X_train: pd.DataFrame,
     X_val: pd.DataFrame,
     X_test: pd.DataFrame,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, StandardScaler]:
-    """Fit StandardScaler on train feature columns; keep every other column."""
+    """Fit StandardScaler on train model columns; keep every other column."""
     scaler = StandardScaler()
-    train_arr = scaler.fit_transform(X_train[FEATURE_COLUMNS])
-    val_arr = scaler.transform(X_val[FEATURE_COLUMNS])
-    test_arr = scaler.transform(X_test[FEATURE_COLUMNS])
+    train_arr = scaler.fit_transform(X_train[MODEL_FEATURE_COLUMNS])
+    val_arr = scaler.transform(X_val[MODEL_FEATURE_COLUMNS])
+    test_arr = scaler.transform(X_test[MODEL_FEATURE_COLUMNS])
 
     def _with_scaled(frame: pd.DataFrame, values) -> pd.DataFrame:
         out = frame.copy()
-        out[FEATURE_COLUMNS] = values
+        out[MODEL_FEATURE_COLUMNS] = values
         return out
 
     return (
@@ -277,6 +349,7 @@ def save_preprocess_artifacts(
     y_severity_val: pd.Series,
     y_severity_test: pd.Series,
     scaler: StandardScaler,
+    residualizer: Residualizer | None = None,
     report: PreprocessReport,
     out_dir: Path | None = None,
 ) -> Path:
@@ -307,6 +380,10 @@ def save_preprocess_artifacts(
 
     scaler_path = out_dir / SCALER_PATH.name
     joblib.dump(scaler, scaler_path)
+    if residualizer is not None:
+        residual_path = out_dir / RESIDUALIZER_PATH.name
+        joblib.dump(residualizer, residual_path)
+        print(f"Wrote residualizer → {residual_path}")
 
     info_path = out_dir / SPLIT_INFO_JSON.name
     info_path.write_text(json.dumps(report.to_dict(), indent=2, default=str))
@@ -326,6 +403,7 @@ def run_preprocess(
 ) -> PreprocessReport:
     """Full preprocess orchestration."""
     df = load_dataset(dataset_path)
+    df, n_dropped_kw = filter_kw_range(df)
     df = sort_within_files(df)
     df = time_splits(
         df,
@@ -340,10 +418,16 @@ def run_preprocess(
         val_ratio=val_ratio,
         test_ratio=test_ratio,
     )
+    report.n_rows_dropped_kw = n_dropped_kw
 
     xy = make_xy_splits(parts, target="both")
+    residualizer = fit_residualizer(xy["X_train"])
+    report.n_residual_fit_rows = residualizer.n_fit_rows
+    X_train_r = apply_residualizer(xy["X_train"], residualizer)
+    X_val_r = apply_residualizer(xy["X_val"], residualizer)
+    X_test_r = apply_residualizer(xy["X_test"], residualizer)
     X_train_s, X_val_s, X_test_s, scaler = fit_transform_scaler(
-        xy["X_train"], xy["X_val"], xy["X_test"]
+        X_train_r, X_val_r, X_test_r
     )
     save_preprocess_artifacts(
         X_train=X_train_s,
@@ -356,6 +440,7 @@ def run_preprocess(
         y_severity_val=xy["y_severity_val"],
         y_severity_test=xy["y_severity_test"],
         scaler=scaler,
+        residualizer=residualizer,
         report=report,
         out_dir=out_dir,
     )

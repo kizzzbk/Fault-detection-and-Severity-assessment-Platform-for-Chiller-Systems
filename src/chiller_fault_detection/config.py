@@ -19,6 +19,11 @@ DATASET_META_JSON = PROCESSED_DIR / "dataset.meta.json"
 SPLITS_DIR = PROCESSED_DIR / "splits"
 SPLIT_INFO_JSON = SPLITS_DIR / "split_info.json"
 SCALER_PATH = SPLITS_DIR / "scaler.joblib"
+RESIDUALIZER_PATH = SPLITS_DIR / "residualizer.joblib"
+
+# Row filter before split: chiller on and kW physically plausible.
+KW_MIN = 10.0
+KW_MAX = 200.0
 
 SHEET_NAME = "Complete Data Set"
 TIME_COLUMN = "Time"
