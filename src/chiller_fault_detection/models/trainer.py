@@ -11,7 +11,9 @@ import pandas as pd
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from sklearn.metrics import accuracy_score, classification_report, f1_score
+import matplotlib.pyplot as plt
+import seaborn as sns
+from sklearn.metrics import accuracy_score, classification_report, confusion_matrix, f1_score
 from torch.utils.data import DataLoader, Dataset
 
 from chiller_fault_detection.config import RANDOM_SEED, SPLITS_DIR
@@ -117,25 +119,36 @@ def encoder_length(length: int, kernel_size: int, stride: int) -> int:
     return int(length)
 
 
-def window_part(frame, window: int, stride: int) -> tuple[np.ndarray, np.ndarray]:
+def window_part(
+    frame, window: int, stride: int
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     xs: list[np.ndarray] = []
     ys: list[int] = []
+    sevs: list[int] = []
     for _, group in frame.groupby("source_file", sort=False):
         values = group.loc[:, MODEL_FEATURE_COLUMNS].to_numpy(dtype=np.float32)
         label = int(group["fault_id"].iloc[0])
+        severity = int(group["severity_level"].iloc[0])
         if len(values) < window:
             continue
         for start in range(0, len(values) - window + 1, stride):
             xs.append(values[start : start + window].T)
             ys.append(label)
+            sevs.append(severity)
     if not xs:
         raise ValueError(f"No windows of length {window} could be built.")
-    return np.stack(xs), np.asarray(ys, dtype=np.int64)
+    return (
+        np.stack(xs),
+        np.asarray(ys, dtype=np.int64),
+        np.asarray(sevs, dtype=np.int64),
+    )
 
 
-def load_window_splits(config: TrainConfig) -> dict[str, tuple[np.ndarray, np.ndarray]]:
-    """Load scaled splits and cut windows. Metadata is used only to group rows."""
-    needed = ["source_file", "fault_id", *MODEL_FEATURE_COLUMNS]
+def load_window_splits(
+    config: TrainConfig,
+) -> dict[str, tuple[np.ndarray, np.ndarray, np.ndarray]]:
+    """Load scaled splits and cut windows. Severity is copied from each source file."""
+    needed = ["source_file", "fault_id", "severity_level", *MODEL_FEATURE_COLUMNS]
     splits = {}
     for name in ("train", "val", "test"):
         parquet_path = SPLITS_DIR / f"X_{name}.parquet"
@@ -161,7 +174,7 @@ def make_loaders(
     train_xy: tuple[np.ndarray, np.ndarray] | None = None,
     batch_size: int | None = None,
 ):
-    x_train, y_train = train_xy if train_xy is not None else splits["train"]
+    x_train, y_train = (train_xy if train_xy is not None else splits["train"])[:2]
     aug1 = aug2 = None
     if training_mode in ("self_supervised", "SupCon"):
         LOGGER.info(
@@ -174,7 +187,7 @@ def make_loaders(
     batch = batch_size or config.batch_size
 
     def _loader(name: str, shuffle: bool, drop_last: bool, xy=None) -> DataLoader:
-        x, y = xy if xy is not None else splits[name]
+        x, y = (xy if xy is not None else splits[name])[:2]
         dataset = WindowDataset(
             x,
             y,
@@ -245,7 +258,7 @@ def Trainer(
             device,
             training_mode,
         )
-        valid_loss, valid_acc, _, _ = model_evaluate(
+        valid_loss, valid_acc, *_ = model_evaluate(
             model, temporal_contr_model, valid_dl, device, training_mode
         )
         if training_mode not in ("self_supervised", "SupCon"):
@@ -335,6 +348,7 @@ def model_evaluate(model, temporal_contr_model, test_dl, device, training_mode):
     total_acc = []
     outs = []
     trgs = []
+    probs = []
 
     with torch.no_grad():
         for data, labels, _, _ in test_dl:
@@ -342,20 +356,24 @@ def model_evaluate(model, temporal_contr_model, test_dl, device, training_mode):
             labels = labels.long().to(device)
             if training_mode in ("self_supervised", "SupCon"):
                 continue
-            predictions, _ = model(data)
-            loss = criterion(predictions, labels)
-            total_acc.append(labels.eq(predictions.detach().argmax(dim=1)).float().mean())
+            logits, _ = model(data)
+            loss = criterion(logits, labels)
+            pred = logits.argmax(dim=1)
+            total_acc.append(labels.eq(pred).float().mean())
             total_loss.append(loss.item())
-            outs.append(predictions.argmax(dim=1).cpu().numpy())
+            outs.append(pred.cpu().numpy())
             trgs.append(labels.cpu().numpy())
+            probs.append(F.softmax(logits, dim=1).cpu().numpy())
 
     if training_mode in ("self_supervised", "SupCon"):
-        return 0.0, 0.0, np.array([]), np.array([])
+        empty = np.array([])
+        return 0.0, 0.0, empty, empty, empty
     return (
         float(torch.tensor(total_loss).mean()),
         float(torch.tensor(total_acc).mean()),
         np.concatenate(outs),
         np.concatenate(trgs),
+        np.concatenate(probs),
     )
 
 
@@ -380,8 +398,12 @@ def _freeze_encoder(model) -> None:
         param.requires_grad = "logits" in name
 
 
+def _class_names() -> list[str]:
+    return [ID_TO_LABEL[i].value for i in range(len(ID_TO_LABEL))]
+
+
 def _report(split_name: str, y_true: np.ndarray, y_pred: np.ndarray) -> str:
-    names = [ID_TO_LABEL[i].value for i in range(len(ID_TO_LABEL))]
+    names = _class_names()
     acc = accuracy_score(y_true, y_pred)
     macro = f1_score(y_true, y_pred, average="macro", zero_division=0)
     text = classification_report(
@@ -390,6 +412,74 @@ def _report(split_name: str, y_true: np.ndarray, y_pred: np.ndarray) -> str:
     summary = f"{split_name}: accuracy={acc:.4f}  macro_f1={macro:.4f}\n{text}"
     LOGGER.info("\n%s", summary)
     return summary
+
+
+def _heatmap(matrix, names: list[str], path: Path, title: str, fmt: str, vmin, vmax) -> None:
+    fig, ax = plt.subplots(figsize=(8, 6.5))
+    sns.heatmap(
+        matrix,
+        annot=True,
+        fmt=fmt,
+        cmap="Blues",
+        xticklabels=names,
+        yticklabels=names,
+        vmin=vmin,
+        vmax=vmax,
+        ax=ax,
+    )
+    ax.set_xlabel("Predicted")
+    ax.set_ylabel("True")
+    ax.set_title(title)
+    fig.tight_layout()
+    fig.savefig(path, dpi=150)
+    plt.close(fig)
+
+
+def _save_eval(
+    out_dir: Path,
+    split_name: str,
+    y_true: np.ndarray,
+    y_pred: np.ndarray,
+    y_prob: np.ndarray,
+) -> None:
+    names = _class_names()
+    np.save(out_dir / f"{split_name}_y_true.npy", y_true)
+    np.save(out_dir / f"{split_name}_y_pred.npy", y_pred)
+    np.save(out_dir / f"{split_name}_y_prob.npy", y_prob)
+
+    labels = list(range(len(names)))
+    cm = confusion_matrix(y_true, y_pred, labels=labels)
+    pd.DataFrame(cm, index=names, columns=names).to_csv(
+        out_dir / f"{split_name}_confusion_matrix.csv"
+    )
+    _heatmap(
+        cm,
+        names,
+        out_dir / f"{split_name}_confusion_matrix.png",
+        f"{split_name} confusion matrix",
+        "d",
+        None,
+        None,
+    )
+
+    mean_prob = np.zeros((len(names), len(names)), dtype=np.float64)
+    for k in labels:
+        mask = y_true == k
+        if mask.any():
+            mean_prob[k] = y_prob[mask].mean(axis=0)
+    pd.DataFrame(mean_prob, index=names, columns=names).to_csv(
+        out_dir / f"{split_name}_softmax_mean.csv"
+    )
+    _heatmap(
+        mean_prob,
+        names,
+        out_dir / f"{split_name}_softmax_mean.png",
+        f"{split_name} mean softmax by true class",
+        ".2f",
+        0.0,
+        1.0,
+    )
+    LOGGER.info("Wrote %s y_true/y_pred/y_prob and plots → %s", split_name, out_dir)
 
 
 def run(config: TrainConfig, out_dir: Path, device: torch.device) -> None:
@@ -429,15 +519,17 @@ def run(config: TrainConfig, out_dir: Path, device: torch.device) -> None:
     LOGGER.info("Linear classifier on frozen encoder")
     Trainer(model,temporal,model_opt,temporal_opt,train_dl,valid_dl,device,config,"train_linear",config.linear_epoch)
 
-    _, _, val_pred, val_true = model_evaluate(
+    _, _, val_pred, val_true, val_prob = model_evaluate(
         model, temporal, valid_dl, device, "train_linear"
     )
-    _, _, test_pred, test_true = model_evaluate(
+    _, _, test_pred, test_true, test_prob = model_evaluate(
         model, temporal, test_dl, device, "train_linear"
     )
     report = _report("val", val_true, val_pred) + "\n" + _report("test", test_true, test_pred)
     report_path = out_dir / "classification_report.txt"
     report_path.write_text(report)
+    _save_eval(out_dir, "val", val_true, val_pred, val_prob)
+    _save_eval(out_dir, "test", test_true, test_pred, test_prob)
     torch.save({"model_state_dict": model.state_dict()}, out_dir / "linear_head.pt")
     LOGGER.info("Wrote report → %s", report_path)
 
@@ -449,7 +541,7 @@ def run_ca_tcc(config: TrainConfig, out_dir: Path, device: torch.device, label_f
     out_dir.mkdir(parents=True, exist_ok=True)
 
     splits = load_window_splits(config)
-    x_train, y_train = splits["train"]
+    x_train, y_train = splits["train"][:2]
     few_idx = stratified_indices(y_train, label_fraction, config.seed)
     few_xy = (x_train[few_idx], y_train[few_idx])
     LOGGER.info("Labeled fraction %.0f%%: %d / %d windows", label_fraction * 100, len(few_idx), len(y_train))
@@ -495,8 +587,12 @@ def run_ca_tcc(config: TrainConfig, out_dir: Path, device: torch.device, label_f
     LOGGER.info("CA-TCC stage 5: linear head on %.0f%% true labels", label_fraction * 100)
     Trainer(model, temporal, model_opt, temporal_opt, train_dl, valid_dl, device, config, "train_linear", config.linear_epoch)
 
-    _, _, val_pred, val_true = model_evaluate(model, temporal, valid_dl, device, "train_linear")
-    _, _, test_pred, test_true = model_evaluate(model, temporal, test_dl, device, "train_linear")
+    _, _, val_pred, val_true, val_prob = model_evaluate(
+        model, temporal, valid_dl, device, "train_linear"
+    )
+    _, _, test_pred, test_true, test_prob = model_evaluate(
+        model, temporal, test_dl, device, "train_linear"
+    )
     report = (
         f"label_fraction={label_fraction} n_labeled={len(few_idx)} pseudo_agree={agree:.4f}\n"
         + _report("val", val_true, val_pred)
@@ -505,5 +601,7 @@ def run_ca_tcc(config: TrainConfig, out_dir: Path, device: torch.device, label_f
     )
     report_path = out_dir / "classification_report.txt"
     report_path.write_text(report)
+    _save_eval(out_dir, "val", val_true, val_pred, val_prob)
+    _save_eval(out_dir, "test", test_true, test_pred, test_prob)
     torch.save({"model_state_dict": model.state_dict()}, out_dir / "linear_head.pt")
     LOGGER.info("Wrote report → %s", report_path)
