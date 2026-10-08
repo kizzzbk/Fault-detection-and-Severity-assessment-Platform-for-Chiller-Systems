@@ -1,7 +1,9 @@
 """Weak and strong views for TS-TCC, built once before training.
 
 Weak view: jitter then scale (Section 3.1).
-Strong view: permute segments, then jitter.
+CNN strong view: permute segments, then jitter.
+PatchTST strong view: mild jitter then mask patches (no permutation — that
+breaks the absolute patch order the Transformer positional embeddings use).
 Input shape is ``(N, C, T)``. The same scale factor is shared across channels
 so a multivariate window stays one sample. Permutation shuffles time for every
 channel together.
@@ -22,10 +24,19 @@ def DataTransform(sample, config) -> tuple[torch.Tensor, torch.Tensor]:
     x = _as_numpy(sample)
     aug = config.augmentation
     weak = scaling(jitter(x, sigma=aug.weak_jitter_ratio), sigma=aug.jitter_scale_ratio)
-    strong = jitter(
-        permutation(x, max_segments=aug.max_seg),
-        sigma=aug.jitter_ratio,
-    )
+    if getattr(config, "encoder", "cnn") == "patchtst":
+        pt = config.patchtst
+        strong = mask_patches(
+            jitter(x, sigma=aug.patchtst_jitter_ratio),
+            patch_len=pt.patch_len,
+            patch_stride=pt.patch_stride,
+            mask_ratio=aug.patchtst_mask_ratio,
+        )
+    else:
+        strong = jitter(
+            permutation(x, max_segments=aug.max_seg),
+            sigma=aug.jitter_ratio,
+        )
     return _as_tensor(weak), _as_tensor(strong)
 
 
@@ -41,6 +52,25 @@ def scaling(x, sigma: float = 1.1):
         np.float32
     )
     return x * factor[:, np.newaxis, :]
+
+
+def mask_patches(x, patch_len: int, patch_stride: int, mask_ratio: float = 0.4):
+    """Zero a random subset of patches, same idea as PatchTST masked pretraining."""
+    x = _as_numpy(x)
+    n_win, _, length = x.shape
+    if patch_len < 1 or patch_stride < 1:
+        raise ValueError("patch_len and patch_stride must be >= 1")
+    if length < patch_len:
+        raise ValueError(f"window {length} is shorter than patch_len {patch_len}")
+    n_tok = (length - patch_len) // patch_stride + 1
+    n_mask = min(n_tok, max(1, int(round(n_tok * mask_ratio))))
+    out = x.copy()
+    for i in range(n_win):
+        chosen = np.random.choice(n_tok, size=n_mask, replace=False)
+        for tok in chosen:
+            start = int(tok) * patch_stride
+            out[i, :, start : start + patch_len] = 0.0
+    return out
 
 
 def permutation(x, max_segments: int = 5, seg_mode: str = "random"):

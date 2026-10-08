@@ -30,12 +30,15 @@ LOGGER = logging.getLogger("ts_tcc")
 
 @dataclass
 class AugmentConfig:
-    # Weak view jitters then scales; strong view permutes then jitters.
+    # Weak view jitters then scales; CNN strong view permutes then jitters.
     # Scale/jitter match the HAR config in the TS-TCC repo (sigma 1.1 and 0.8).
+    # PatchTST strong view uses milder jitter + patch masking instead of permute.
     weak_jitter_ratio: float = 0.05
     jitter_scale_ratio: float = 1.1
     jitter_ratio: float = 0.8
     max_seg: int = 8
+    patchtst_jitter_ratio: float = 0.2
+    patchtst_mask_ratio: float = 0.4
 
 
 @dataclass
@@ -52,15 +55,21 @@ class TemporalConfig:
 
 @dataclass
 class PatchTSTConfig:
-    """Used only when ``TrainConfig.encoder == 'patchtst'``. CNN ignores these."""
+    """Used only when ``TrainConfig.encoder == 'patchtst'``. CNN ignores these.
 
-    patch_len: int = 16
-    patch_stride: int = 8
-    d_model: int = 64
-    n_layers: int = 2
-    n_heads: int = 4
-    d_ff: int = 128
+    Defaults track Tsinghua PatchTST more closely than the first drop-in
+    encoder: smaller patches (more tokens on window=128), d_model=128,
+    3 layers. ``head_dropout`` is the Tsinghua classification-head dropout.
+    """
+
+    patch_len: int = 8
+    patch_stride: int = 4
+    d_model: int = 128
+    n_layers: int = 3
+    n_heads: int = 8
+    d_ff: int = 256
     dropout: float = 0.2
+    head_dropout: float = 0.2
 
 
 @dataclass
@@ -411,16 +420,24 @@ def model_evaluate(model, temporal_contr_model, test_dl, device, training_mode):
     )
 
 
+def _encoder_lr(config: TrainConfig) -> float:
+    """Tsinghua PatchTST SSL uses ~1e-4; CNN keeps the TS-TCC 3e-4 default."""
+    if config.encoder == "patchtst":
+        return min(config.lr, 1e-4)
+    return config.lr
+
+
 def _optimizers(model, temporal_contr_model, config: TrainConfig):
+    lr = _encoder_lr(config)
     model_optimizer = torch.optim.Adam(
         filter(lambda p: p.requires_grad, model.parameters()),
-        lr=config.lr,
+        lr=lr,
         betas=(config.beta1, config.beta2),
         weight_decay=3e-4,
     )
     temp_cont_optimizer = torch.optim.Adam(
         temporal_contr_model.parameters(),
-        lr=config.lr,
+        lr=lr,
         betas=(config.beta1, config.beta2),
         weight_decay=3e-4,
     )
@@ -430,6 +447,15 @@ def _optimizers(model, temporal_contr_model, config: TrainConfig):
 def _freeze_encoder(model) -> None:
     for name, param in model.named_parameters():
         param.requires_grad = "logits" in name
+
+
+def _maybe_freeze_for_linear(model, config: TrainConfig) -> None:
+    """CNN: linear probe on a frozen encoder. PatchTST: fine-tune the whole net."""
+    if config.encoder == "patchtst":
+        LOGGER.info("Supervised fine-tune of full PatchTST encoder + head")
+        return
+    _freeze_encoder(model)
+    LOGGER.info("Linear classifier on frozen encoder")
 
 
 def _class_names() -> list[str]:
@@ -449,7 +475,8 @@ def _experiment_header(config: TrainConfig, method: str, extra: str = "") -> str
         lines.append(
             "patchtst "
             f"patch_len={pt.patch_len} patch_stride={pt.patch_stride} "
-            f"d_model={pt.d_model} n_layers={pt.n_layers} n_heads={pt.n_heads}"
+            f"d_model={pt.d_model} n_layers={pt.n_layers} n_heads={pt.n_heads} "
+            f"d_ff={pt.d_ff} lr={_encoder_lr(config):.1e} freeze_encoder=False"
         )
     if extra:
         lines.append(extra)
@@ -569,10 +596,9 @@ def run(config: TrainConfig, out_dir: Path, device: torch.device) -> None:
     torch.save(checkpoint, ckpt_path)
     LOGGER.info("Wrote encoder checkpoint → %s", ckpt_path)
 
-    _freeze_encoder(model)
+    _maybe_freeze_for_linear(model, config)
     train_dl, valid_dl, test_dl = make_loaders(splits, config, "train_linear")
     model_opt, temporal_opt = _optimizers(model, temporal, config)
-    LOGGER.info("Linear classifier on frozen encoder")
     Trainer(model,temporal,model_opt,temporal_opt,train_dl,valid_dl,device,config,"train_linear",config.linear_epoch)
 
     _, _, val_pred, val_true, val_prob = model_evaluate(
@@ -640,13 +666,13 @@ def run_ca_tcc(config: TrainConfig, out_dir: Path, device: torch.device, label_f
     Trainer(model, temporal, model_opt, temporal_opt, train_dl, valid_dl, device, config, "SupCon", config.num_epoch)
     torch.save({"model_state_dict": model.state_dict()}, out_dir / "ckp_supcon.pt")
 
-    #CA-TCC Stage 5: Freeze the encoder and train the final linear layer
-    _freeze_encoder(model)
+    #CA-TCC Stage 5: CNN freezes the encoder; PatchTST fine-tunes the full net
+    _maybe_freeze_for_linear(model, config)
     train_dl, valid_dl, test_dl = make_loaders(
         splits, config, "train_linear", train_xy=few_xy, batch_size=16
     )
     model_opt, temporal_opt = _optimizers(model, temporal, config)
-    LOGGER.info("CA-TCC stage 5: linear head on %.0f%% true labels", label_fraction * 100)
+    LOGGER.info("CA-TCC stage 5: head on %.0f%% true labels", label_fraction * 100)
     Trainer(model, temporal, model_opt, temporal_opt, train_dl, valid_dl, device, config, "train_linear", config.linear_epoch)
 
     _, _, val_pred, val_true, val_prob = model_evaluate(

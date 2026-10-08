@@ -51,6 +51,7 @@ def main() -> None:
     parser.add_argument("--d-model", type=int, default=None)
     parser.add_argument("--n-layers", type=int, default=None)
     parser.add_argument("--n-heads", type=int, default=None)
+    parser.add_argument("--d-ff", type=int, default=None)
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(message)s")
@@ -69,6 +70,8 @@ def main() -> None:
         patchtst.n_layers = args.n_layers
     if args.n_heads is not None:
         patchtst.n_heads = args.n_heads
+    if args.d_ff is not None:
+        patchtst.d_ff = args.d_ff
 
     config = TrainConfig(
         encoder=args.encoder,
