@@ -3,9 +3,10 @@
 Policies (confirmed)
 --------------------
 * Sheet: ``Complete Data Set``
-* Features: 22 fixed columns in ``FEATURE_COLUMNS``
+* Features: 22 columns in ``FEATURE_COLUMNS`` (Excel sensors + derived ΔT)
+* ``CDW_DT = TCO - TCI``, ``CHW_DT = TEI - TEO`` (not present on the Excel sheets)
 * NaN in any feature → **drop** the row; count in ``LoadReport``
-* Eligible file missing a required column → **raise** with full report
+* Eligible file missing a required **source** column → **raise** with full report
 * Exclusion list is **exact** filenames in ``EXCLUDED_FILES``
 * Metadata columns: source_file, time, fault, fault_id, severity_level, path_label
   (no ``severity_pct`` in the saved dataset)
@@ -57,8 +58,14 @@ FEATURE_COLUMNS: list[str] = [
     "PRC",
     "P_lift",
     "PO_feed",
-    "FWC",
-    "FWE",
+    "CDW_DT",
+    "CHW_DT",
+]
+
+# Present on RP-1043 Excel sheets. ΔT columns are derived after read.
+DERIVED_FEATURE_COLUMNS: tuple[str, ...] = ("CDW_DT", "CHW_DT")
+SOURCE_FEATURE_COLUMNS: list[str] = [
+    col for col in FEATURE_COLUMNS if col not in DERIVED_FEATURE_COLUMNS
 ]
 
 # Group 1: experimental knobs. Used only as inputs to residual f_c.
@@ -81,10 +88,12 @@ RESIDUAL_COLUMNS: list[str] = [
     "PRC",
     "P_lift",
     "TO_sump",
+    "CDW_DT",
+    "CHW_DT",
 ]
 
 # Group 4: keep raw; not residualized.
-KEEP_RAW_COLUMNS: list[str] = ["FWE", "FWC", "PO_net", "PO_feed"]
+KEEP_RAW_COLUMNS: list[str] = ["PO_net", "PO_feed"]
 
 # Columns written into model-ready X after residual + drop knobs (19).
 MODEL_FEATURE_COLUMNS: list[str] = [*RESIDUAL_COLUMNS, *KEEP_RAW_COLUMNS]
@@ -135,7 +144,9 @@ class LoadReport:
     feature_columns: list[str] = field(default_factory=lambda: list(FEATURE_COLUMNS))
     nan_policy: str = "drop rows with any NaN in FEATURE_COLUMNS"
     tiny_policy: str = f"abs(x) < {TINY_ABS} -> 0.0"
-    missing_column_policy: str = "raise if any eligible file is missing FEATURE_COLUMNS"
+    missing_column_policy: str = (
+        "raise if any eligible file is missing SOURCE_FEATURE_COLUMNS"
+    )
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -182,7 +193,7 @@ def inspect_columns(
                 path, sheet_name=sheet_name, nrows=0, engine=_excel_engine(path)
             )
             present = {str(c).strip() for c in header.columns}
-            required = [TIME_COLUMN, *FEATURE_COLUMNS]
+            required = [TIME_COLUMN, *SOURCE_FEATURE_COLUMNS]
             missing = [c for c in required if c not in present]
             row["missing"] = missing
             row["ok"] = not missing
@@ -206,8 +217,24 @@ def read_excel_file(
     """Read one Excel sheet. Assumes ``inspect_columns`` already passed."""
     df = pd.read_excel(path, sheet_name=sheet_name, engine=_excel_engine(path))
     df.columns = [str(c).strip() for c in df.columns]
-    out = df.loc[:, [TIME_COLUMN, *FEATURE_COLUMNS]].copy()
+    out = df.loc[:, [TIME_COLUMN, *SOURCE_FEATURE_COLUMNS]].copy()
     return out.rename(columns={TIME_COLUMN: "time"})
+
+
+def add_derived_features(df: pd.DataFrame) -> pd.DataFrame:
+    """Add water ΔT proxies: ``CHW_DT = TEI - TEO``, ``CDW_DT = TCO - TCI``."""
+    needed = ["TEI", "TEO", "TCI", "TCO"]
+    missing = [col for col in needed if col not in df.columns]
+    if missing:
+        raise ValueError(f"Cannot derive ΔT; missing columns: {missing}")
+    out = df.copy()
+    tei = pd.to_numeric(out["TEI"], errors="coerce")
+    teo = pd.to_numeric(out["TEO"], errors="coerce")
+    tci = pd.to_numeric(out["TCI"], errors="coerce")
+    tco = pd.to_numeric(out["TCO"], errors="coerce")
+    out["CDW_DT"] = tco - tci
+    out["CHW_DT"] = tei - teo
+    return out
 
 
 def coerce_feature_types(df: pd.DataFrame) -> tuple[pd.DataFrame, int]:
@@ -325,6 +352,7 @@ def load_dataset(
         print(f"Loading {path.relative_to(data_dir)} ...")
         label = parse_source_label(path)
         part = read_excel_file(path, sheet_name=sheet_name)
+        part = add_derived_features(part)
         part, n_tiny = coerce_feature_types(part)
         report.replaced_tiny_values += n_tiny
         part, n_drop = drop_invalid_rows(part)

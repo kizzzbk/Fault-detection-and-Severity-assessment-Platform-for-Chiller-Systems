@@ -23,6 +23,7 @@ from chiller_fault_detection.models.TC import TC
 from chiller_fault_detection.models.augmentations import DataTransform
 from chiller_fault_detection.models.loss import NTXentLoss, SupConLoss
 from chiller_fault_detection.models.model import base_Model
+from chiller_fault_detection.models.patchtst import PatchTSTEncoder, n_patches
 
 LOGGER = logging.getLogger("ts_tcc")
 
@@ -50,7 +51,21 @@ class TemporalConfig:
 
 
 @dataclass
+class PatchTSTConfig:
+    """Used only when ``TrainConfig.encoder == 'patchtst'``. CNN ignores these."""
+
+    patch_len: int = 16
+    patch_stride: int = 8
+    d_model: int = 64
+    n_layers: int = 2
+    n_heads: int = 4
+    d_ff: int = 128
+    dropout: float = 0.2
+
+
+@dataclass
 class TrainConfig:
+    encoder: str = "cnn"
     input_channels: int = len(MODEL_FEATURE_COLUMNS)
     kernel_size: int = 8
     stride: int = 1
@@ -71,6 +86,7 @@ class TrainConfig:
     augmentation: AugmentConfig = None
     Context_Cont: ContextConfig = None
     TC: TemporalConfig = None
+    patchtst: PatchTSTConfig = None
 
     def __post_init__(self) -> None:
         if self.augmentation is None:
@@ -79,11 +95,29 @@ class TrainConfig:
             self.Context_Cont = ContextConfig()
         if self.TC is None:
             self.TC = TemporalConfig()
-        self.features_len = encoder_length(self.window, self.kernel_size, self.stride)
+        if self.patchtst is None:
+            self.patchtst = PatchTSTConfig()
+        if self.encoder == "cnn":
+            self.features_len = encoder_length(self.window, self.kernel_size, self.stride)
+        elif self.encoder == "patchtst":
+            self.features_len = n_patches(
+                self.window, self.patchtst.patch_len, self.patchtst.patch_stride
+            )
+        else:
+            raise ValueError(f"Unknown encoder {self.encoder!r}; use 'cnn' or 'patchtst'")
         if self.features_len <= self.TC.timesteps:
             raise ValueError(
                 f"Encoder length {self.features_len} must exceed TC timesteps {self.TC.timesteps}"
             )
+
+
+def build_encoder(config: TrainConfig) -> nn.Module:
+    """CNN ``base_Model`` or PatchTST; both return ``(logits, features)``."""
+    if config.encoder == "cnn":
+        return base_Model(config)
+    if config.encoder == "patchtst":
+        return PatchTSTEncoder(config)
+    raise ValueError(f"Unknown encoder {config.encoder!r}")
 
 
 class WindowDataset(Dataset):
@@ -402,6 +436,26 @@ def _class_names() -> list[str]:
     return [ID_TO_LABEL[i].value for i in range(len(ID_TO_LABEL))]
 
 
+def _experiment_header(config: TrainConfig, method: str, extra: str = "") -> str:
+    lines = [
+        f"method={method}",
+        f"encoder={config.encoder}",
+        f"window={config.window}",
+        f"features_len={config.features_len}",
+        f"final_out_channels={config.final_out_channels}",
+    ]
+    if config.encoder == "patchtst":
+        pt = config.patchtst
+        lines.append(
+            "patchtst "
+            f"patch_len={pt.patch_len} patch_stride={pt.patch_stride} "
+            f"d_model={pt.d_model} n_layers={pt.n_layers} n_heads={pt.n_heads}"
+        )
+    if extra:
+        lines.append(extra)
+    return "\n".join(lines) + "\n\n"
+
+
 def _report(split_name: str, y_true: np.ndarray, y_pred: np.ndarray) -> str:
     names = _class_names()
     acc = accuracy_score(y_true, y_pred)
@@ -488,10 +542,11 @@ def run(config: TrainConfig, out_dir: Path, device: torch.device) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
 
     splits = load_window_splits(config)
-    for name, (x, y) in splits.items():
+    for name, (x, y, z) in splits.items():
         LOGGER.info("%s windows: %s  labels: %s", name, x.shape, np.bincount(y))
 
-    model = base_Model(config).to(device)
+    LOGGER.info("Encoder=%s  features_len=%d", config.encoder, config.features_len)
+    model = build_encoder(config).to(device)
     temporal = TC(config, device).to(device)
 
     train_dl, valid_dl, test_dl = make_loaders(splits, config, "self_supervised")
@@ -503,6 +558,7 @@ def run(config: TrainConfig, out_dir: Path, device: torch.device) -> None:
         "model_state_dict": model.state_dict(),
         "temporal_contr_model_state_dict": temporal.state_dict(),
         "config": {
+            "encoder": config.encoder,
             "window": config.window,
             "stride_windows": config.stride_windows,
             "features_len": config.features_len,
@@ -525,7 +581,12 @@ def run(config: TrainConfig, out_dir: Path, device: torch.device) -> None:
     _, _, test_pred, test_true, test_prob = model_evaluate(
         model, temporal, test_dl, device, "train_linear"
     )
-    report = _report("val", val_true, val_pred) + "\n" + _report("test", test_true, test_pred)
+    report = (
+        _experiment_header(config, "ts-tcc")
+        + _report("val", val_true, val_pred)
+        + "\n"
+        + _report("test", test_true, test_pred)
+    )
     report_path = out_dir / "classification_report.txt"
     report_path.write_text(report)
     _save_eval(out_dir, "val", val_true, val_pred, val_prob)
@@ -546,7 +607,8 @@ def run_ca_tcc(config: TrainConfig, out_dir: Path, device: torch.device, label_f
     few_xy = (x_train[few_idx], y_train[few_idx])
     LOGGER.info("Labeled fraction %.0f%%: %d / %d windows", label_fraction * 100, len(few_idx), len(y_train))
 
-    model = base_Model(config).to(device)
+    LOGGER.info("Encoder=%s  features_len=%d", config.encoder, config.features_len)
+    model = build_encoder(config).to(device)
     temporal = TC(config, device).to(device)
 
     #CA-TCC Stage 1: Pretrain self-supervised on all training windows
@@ -594,7 +656,11 @@ def run_ca_tcc(config: TrainConfig, out_dir: Path, device: torch.device, label_f
         model, temporal, test_dl, device, "train_linear"
     )
     report = (
-        f"label_fraction={label_fraction} n_labeled={len(few_idx)} pseudo_agree={agree:.4f}\n"
+        _experiment_header(
+            config,
+            "ca-tcc",
+            extra=f"label_fraction={label_fraction} n_labeled={len(few_idx)} pseudo_agree={agree:.4f}",
+        )
         + _report("val", val_true, val_pred)
         + "\n"
         + _report("test", test_true, test_pred)

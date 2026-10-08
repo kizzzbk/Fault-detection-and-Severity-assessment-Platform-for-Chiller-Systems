@@ -12,7 +12,8 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 DATA_DIR = REPO_ROOT / "data" / "ASHRAE RP-1043" / "Chiller Data"
-PROCESSED_DIR = REPO_ROOT / "artifacts" / "processed"
+ARTIFACTS_DIR = REPO_ROOT / "artifacts"
+PROCESSED_DIR = ARTIFACTS_DIR / "processed"
 DATASET_PARQUET = PROCESSED_DIR / "dataset.parquet"
 DATASET_META_JSON = PROCESSED_DIR / "dataset.meta.json"
 

@@ -6,8 +6,9 @@ Pipeline
 2. Sort rows by ``time`` within each ``source_file``.
 3. Assign train/val/test by **time order inside each file** (default 70/15/15).
 4. Partition into three DataFrames. ``X`` keeps metadata and features; ``y`` holds labels.
-5. Residualize groups 2+3: fit linear ``f_c(TEO, TCI, kW)`` on train∩normal,
-   subtract from train/val/test; drop the three knobs; keep group 4 raw.
+5. Residualize groups 2+3 (incl. ``CDW_DT``, ``CHW_DT``): fit linear
+   ``f_c(TEO, TCI, kW)`` on train∩normal, subtract from train/val/test;
+   drop the three knobs; keep group 4 (``PO_net``, ``PO_feed``) raw.
 6. Fit ``StandardScaler`` on the 19 model columns (train only).
 7. Save split artifacts under ``artifacts/processed/splits/``.
 """

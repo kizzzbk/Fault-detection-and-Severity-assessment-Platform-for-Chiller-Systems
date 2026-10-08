@@ -1,3 +1,9 @@
+"""Original TS-TCC CNN encoder.
+
+Keep this file as the conv ``base_Model``. PatchTST is ``patchtst.PatchTSTEncoder``.
+Both expose ``forward(x) -> (logits, features)``; switch them with ``--encoder``.
+"""
+
 from torch import nn
 
 class base_Model(nn.Module):
