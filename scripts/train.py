@@ -1,4 +1,4 @@
-"""CLI: train TS-TCC or CA-TCC and write the report under artifacts."""
+"""CLI: train TS-TCC, CA-TCC or CA-TCC-FixMatch and write the report under artifacts."""
 
 import argparse
 import logging
@@ -7,6 +7,7 @@ from pathlib import Path
 import torch
 
 from chiller_fault_detection.config import ARTIFACTS_DIR
+from chiller_fault_detection.models.fixmatch import FixMatchConfig, run_ca_tcc_fixmatch
 from chiller_fault_detection.models.trainer import (
     PatchTSTConfig,
     TrainConfig,
@@ -14,10 +15,11 @@ from chiller_fault_detection.models.trainer import (
     run_ca_tcc,
 )
 
+METHODS = ("ts-tcc", "ca-tcc", "ca-tcc-fixmatch")
+
 
 def _run_name(method: str, encoder: str) -> str:
-    method_key = "ca_tcc" if method == "ca-tcc" else "ts_tcc"
-    return f"{method_key}_{encoder}"
+    return f"{method.replace('-', '_')}_{encoder}"
 
 
 def _default_device() -> str:
@@ -36,7 +38,7 @@ def main() -> None:
     parser.add_argument("--batch-size", type=int, default=128)
     parser.add_argument("--window", type=int, default=128)
     parser.add_argument("--stride", type=int, default=64)
-    parser.add_argument("--method", choices=("ts-tcc", "ca-tcc"), default="ca-tcc")
+    parser.add_argument("--method", choices=METHODS, default="ca-tcc")
     parser.add_argument(
         "--encoder",
         choices=("cnn", "patchtst"),
@@ -52,6 +54,12 @@ def main() -> None:
     parser.add_argument("--n-layers", type=int, default=None)
     parser.add_argument("--n-heads", type=int, default=None)
     parser.add_argument("--d-ff", type=int, default=None)
+    parser.add_argument(
+        "--fixmatch-tau",
+        type=float,
+        default=0.95,
+        help="ca-tcc-fixmatch only: keep pseudo labels with max softmax above this",
+    )
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(message)s")
@@ -82,10 +90,14 @@ def main() -> None:
         stride_windows=args.stride,
         patchtst=patchtst,
     )
-    if args.method == "ca-tcc":
-        run_ca_tcc(config, out_dir, torch.device(device_name), args.label_fraction)
+    device = torch.device(device_name)
+    if args.method == "ca-tcc-fixmatch":
+        fixmatch = FixMatchConfig(tau=args.fixmatch_tau)
+        run_ca_tcc_fixmatch(config, fixmatch, out_dir, device, args.label_fraction)
+    elif args.method == "ca-tcc":
+        run_ca_tcc(config, out_dir, device, args.label_fraction)
     else:
-        run(config, out_dir, torch.device(device_name))
+        run(config, out_dir, device)
 
 
 if __name__ == "__main__":
