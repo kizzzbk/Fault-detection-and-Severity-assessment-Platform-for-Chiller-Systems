@@ -46,6 +46,11 @@ def main() -> None:
         help="cnn = original TS-TCC conv encoder; patchtst = PatchTST replacement",
     )
     parser.add_argument("--label-fraction", type=float, default=0.01)
+    parser.add_argument(
+        "--finetune-encoder",
+        action="store_true",
+        help="final stage trains encoder + classifier instead of a linear probe on a frozen encoder",
+    )
     parser.add_argument("--out-dir", type=Path, default=None)
     parser.add_argument("--device", type=str, default=None)
     parser.add_argument("--patch-len", type=int, default=None)
@@ -57,15 +62,19 @@ def main() -> None:
     parser.add_argument(
         "--fixmatch-tau",
         type=float,
-        default=0.95,
-        help="ca-tcc-fixmatch only: keep pseudo labels with max softmax above this",
+        default=0.8,
+        help="ca-tcc-fixmatch only: keep pseudo labels with max softmax above this "
+        "(default: FixMatchConfig.tau)",
     )
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     device_name = args.device or _default_device()
     logging.info("Device: %s", device_name)
-    out_dir = args.out_dir or (ARTIFACTS_DIR / _run_name(args.method, args.encoder))
+    run_name = _run_name(args.method, args.encoder)
+    if args.finetune_encoder:
+        run_name += "_ft"
+    out_dir = args.out_dir or (ARTIFACTS_DIR / run_name)
 
     patchtst = PatchTSTConfig()
     if args.patch_len is not None:
@@ -89,10 +98,13 @@ def main() -> None:
         window=args.window,
         stride_windows=args.stride,
         patchtst=patchtst,
+        finetune_encoder=args.finetune_encoder,
     )
     device = torch.device(device_name)
     if args.method == "ca-tcc-fixmatch":
-        fixmatch = FixMatchConfig(tau=args.fixmatch_tau)
+        fixmatch = (
+            FixMatchConfig() if args.fixmatch_tau is None else FixMatchConfig(tau=args.fixmatch_tau)
+        )
         run_ca_tcc_fixmatch(config, fixmatch, out_dir, device, args.label_fraction)
     elif args.method == "ca-tcc":
         run_ca_tcc(config, out_dir, device, args.label_fraction)

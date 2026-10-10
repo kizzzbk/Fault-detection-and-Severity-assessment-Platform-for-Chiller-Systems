@@ -92,6 +92,7 @@ class TrainConfig:
     window: int = 128
     stride_windows: int = 64
     seed: int = RANDOM_SEED
+    finetune_encoder: bool = False
     augmentation: AugmentConfig = None
     Context_Cont: ContextConfig = None
     TC: TemporalConfig = None
@@ -450,9 +451,9 @@ def _freeze_encoder(model) -> None:
 
 
 def _maybe_freeze_for_linear(model, config: TrainConfig) -> None:
-    """CNN: linear probe on a frozen encoder. PatchTST: fine-tune the whole net."""
-    if config.encoder == "patchtst":
-        LOGGER.info("Supervised fine-tune of full PatchTST encoder + head")
+    """CNN: linear probe on a frozen encoder unless ``finetune_encoder``. PatchTST: always fine-tune."""
+    if config.encoder == "patchtst" or config.finetune_encoder:
+        LOGGER.info("Supervised fine-tune of full %s encoder + head", config.encoder)
         return
     _freeze_encoder(model)
     LOGGER.info("Linear classifier on frozen encoder")
@@ -469,6 +470,7 @@ def _experiment_header(config: TrainConfig, method: str, extra: str = "") -> str
         f"window={config.window}",
         f"features_len={config.features_len}",
         f"final_out_channels={config.final_out_channels}",
+        f"finetune_encoder={config.finetune_encoder or config.encoder == 'patchtst'}",
     ]
     if config.encoder == "patchtst":
         pt = config.patchtst
