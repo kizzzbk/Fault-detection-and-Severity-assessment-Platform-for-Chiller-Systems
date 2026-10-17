@@ -45,11 +45,8 @@ FEATURE_COLUMNS: list[str] = [
     "TRE",
     "TRC",
     "TRC_sub",
-    "T_suc",
     "Tsh_suc",
     "TR_dis",
-    "Tsh_dis",
-    "TEA",
     "TCA",
     "kW",
     "TO_sump",
@@ -57,7 +54,6 @@ FEATURE_COLUMNS: list[str] = [
     "PRE",
     "PRC",
     "P_lift",
-    "PO_feed",
     "CDW_DT",
     "CHW_DT",
 ]
@@ -76,14 +72,11 @@ RESIDUAL_COLUMNS: list[str] = [
     "TEI",
     "TCO",
     "TRE",
-    "T_suc",
     "Tsh_suc",
-    "Tsh_dis",
     "PRE",
     "TRC",
     "TRC_sub",
     "TR_dis",
-    "TEA",
     "TCA",
     "PRC",
     "P_lift",
@@ -93,7 +86,7 @@ RESIDUAL_COLUMNS: list[str] = [
 ]
 
 # Group 4: keep raw; not residualized.
-KEEP_RAW_COLUMNS: list[str] = ["PO_net", "PO_feed"]
+KEEP_RAW_COLUMNS: list[str] = ["PO_net"]
 
 # Columns written into model-ready X after residual + drop knobs (19).
 MODEL_FEATURE_COLUMNS: list[str] = [*RESIDUAL_COLUMNS, *KEEP_RAW_COLUMNS]
