@@ -16,6 +16,7 @@ dependencies = [
     "scikit-learn>=1.9.1",
     "seaborn>=0.13.2",
     "torch>=2.14.0",
+    "transformers>=4.56",
     "xlrd>=2.0.2",
 ]
 
