@@ -145,7 +145,7 @@ def run_ca_tcc_fixmatch(
     Trainer(model, temporal, model_opt, temporal_opt, train_dl, valid_dl, device, config, "SupCon", config.num_epoch)
     torch.save({"model_state_dict": model.state_dict()}, out_dir / "ckp_supcon.pt")
 
-    # Stage 5: head on the labeled fraction
+    # Stage 5: CNN and DINOv3 train the head; PatchTST and --finetune-encoder train the full net
     _maybe_freeze_for_linear(model, config)
     train_dl, valid_dl, test_dl = make_loaders(
         splits, config, "train_linear", train_xy=few_xy, batch_size=16
