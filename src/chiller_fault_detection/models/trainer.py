@@ -22,6 +22,7 @@ from chiller_fault_detection.labels import ID_TO_LABEL
 from chiller_fault_detection.models.TC import TC
 from chiller_fault_detection.models.augmentations import DataTransform
 from chiller_fault_detection.models.loss import NTXentLoss, SupConLoss
+from chiller_fault_detection.models.dinov3 import Dinov3Encoder, n_dino_tokens
 from chiller_fault_detection.models.model import base_Model
 from chiller_fault_detection.models.patchtst import PatchTSTEncoder, n_patches
 
@@ -32,13 +33,15 @@ LOGGER = logging.getLogger("ts_tcc")
 class AugmentConfig:
     # Weak view jitters then scales; CNN strong view permutes then jitters.
     # Scale/jitter match the HAR config in the TS-TCC repo (sigma 1.1 and 0.8).
-    # PatchTST strong view uses milder jitter + patch masking instead of permute.
+    # PatchTST and DINOv3 strong views use milder jitter + masking, not permute.
     weak_jitter_ratio: float = 0.05
     jitter_scale_ratio: float = 1.1
     jitter_ratio: float = 0.8
     max_seg: int = 8
     patchtst_jitter_ratio: float = 0.2
     patchtst_mask_ratio: float = 0.4
+    dinov3_jitter_ratio: float = 0.2
+    dinov3_mask_ratio: float = 0.4
 
 
 @dataclass
@@ -73,6 +76,15 @@ class PatchTSTConfig:
 
 
 @dataclass
+class Dinov3Config:
+    variant: str = "vits16"
+    img_size: int = 224
+    patch_size: int = 16
+    mask_patch_len: int = 8
+    mask_patch_stride: int = 8
+
+
+@dataclass
 class TrainConfig:
     encoder: str = "cnn"
     input_channels: int = len(MODEL_FEATURE_COLUMNS)
@@ -97,6 +109,7 @@ class TrainConfig:
     Context_Cont: ContextConfig = None
     TC: TemporalConfig = None
     patchtst: PatchTSTConfig = None
+    dinov3: Dinov3Config = None
 
     def __post_init__(self) -> None:
         if self.augmentation is None:
@@ -107,14 +120,20 @@ class TrainConfig:
             self.TC = TemporalConfig()
         if self.patchtst is None:
             self.patchtst = PatchTSTConfig()
+        if self.dinov3 is None:
+            self.dinov3 = Dinov3Config()
         if self.encoder == "cnn":
             self.features_len = encoder_length(self.window, self.kernel_size, self.stride)
         elif self.encoder == "patchtst":
             self.features_len = n_patches(
                 self.window, self.patchtst.patch_len, self.patchtst.patch_stride
             )
+        elif self.encoder == "dinov3":
+            self.features_len = n_dino_tokens(self.dinov3.img_size, self.dinov3.patch_size)
         else:
-            raise ValueError(f"Unknown encoder {self.encoder!r}; use 'cnn' or 'patchtst'")
+            raise ValueError(
+                f"Unknown encoder {self.encoder!r}; use 'cnn', 'patchtst', or 'dinov3'"
+            )
         if self.features_len <= self.TC.timesteps:
             raise ValueError(
                 f"Encoder length {self.features_len} must exceed TC timesteps {self.TC.timesteps}"
@@ -122,11 +141,21 @@ class TrainConfig:
 
 
 def build_encoder(config: TrainConfig) -> nn.Module:
-    """CNN ``base_Model`` or PatchTST; both return ``(logits, features)``."""
+    """CNN, PatchTST, or DINOv3. Each returns ``(logits, features)``."""
     if config.encoder == "cnn":
         return base_Model(config)
     if config.encoder == "patchtst":
         return PatchTSTEncoder(config)
+    if config.encoder == "dinov3":
+        model = Dinov3Encoder(config)
+        if config.finetune_encoder:
+            LOGGER.info("DINOv3 backbone stays trainable at lr %.1e", _encoder_lr(config))
+        else:
+            model.freeze_backbone()
+            LOGGER.info(
+                "DINOv3 backbone frozen from stage 1; projection stays trainable until the linear probe"
+            )
+        return model
     raise ValueError(f"Unknown encoder {config.encoder!r}")
 
 
@@ -422,9 +451,15 @@ def model_evaluate(model, temporal_contr_model, test_dl, device, training_mode):
 
 
 def _encoder_lr(config: TrainConfig) -> float:
-    """Tsinghua PatchTST SSL uses ~1e-4; CNN keeps the TS-TCC 3e-4 default."""
+    """PatchTST caps at 1e-4. A trainable DINOv3 ViT caps at 1e-5.
+
+    A frozen DINOv3 backbone leaves the projection and the head on ``config.lr``
+    (3e-4). The same rate is also used for the temporal-contrasting module.
+    """
     if config.encoder == "patchtst":
         return min(config.lr, 1e-4)
+    if config.encoder == "dinov3" and config.finetune_encoder:
+        return min(config.lr, 1e-5)
     return config.lr
 
 
@@ -451,7 +486,11 @@ def _freeze_encoder(model) -> None:
 
 
 def _maybe_freeze_for_linear(model, config: TrainConfig) -> None:
-    """CNN: linear probe on a frozen encoder unless ``finetune_encoder``. PatchTST: always fine-tune."""
+    """Linear probe for CNN and DINOv3. PatchTST, or ``finetune_encoder``, trains the full net.
+
+    DINOv3's ViT is already frozen in ``build_encoder``. This second freeze
+    also stops the feature projection, so the last stage updates only ``logits``.
+    """
     if config.encoder == "patchtst" or config.finetune_encoder:
         LOGGER.info("Supervised fine-tune of full %s encoder + head", config.encoder)
         return
@@ -479,6 +518,14 @@ def _experiment_header(config: TrainConfig, method: str, extra: str = "") -> str
             f"patch_len={pt.patch_len} patch_stride={pt.patch_stride} "
             f"d_model={pt.d_model} n_layers={pt.n_layers} n_heads={pt.n_heads} "
             f"d_ff={pt.d_ff} lr={_encoder_lr(config):.1e} freeze_encoder=False"
+        )
+    elif config.encoder == "dinov3":
+        d3 = config.dinov3
+        lines.append(
+            "dinov3 "
+            f"variant={d3.variant} img_size={d3.img_size} patch_size={d3.patch_size} "
+            f"n_tokens={config.features_len} lr={_encoder_lr(config):.1e} "
+            f"freeze_backbone={not config.finetune_encoder}"
         )
     if extra:
         lines.append(extra)
@@ -668,7 +715,7 @@ def run_ca_tcc(config: TrainConfig, out_dir: Path, device: torch.device, label_f
     Trainer(model, temporal, model_opt, temporal_opt, train_dl, valid_dl, device, config, "SupCon", config.num_epoch)
     torch.save({"model_state_dict": model.state_dict()}, out_dir / "ckp_supcon.pt")
 
-    #CA-TCC Stage 5: CNN freezes the encoder; PatchTST fine-tunes the full net
+    #CA-TCC Stage 5: CNN and DINOv3 freeze down to the head; PatchTST fine-tunes the full net
     _maybe_freeze_for_linear(model, config)
     train_dl, valid_dl, test_dl = make_loaders(
         splits, config, "train_linear", train_xy=few_xy, batch_size=16

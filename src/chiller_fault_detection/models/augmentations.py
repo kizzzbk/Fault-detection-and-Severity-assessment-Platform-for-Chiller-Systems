@@ -2,8 +2,9 @@
 
 Weak view: jitter then scale (Section 3.1).
 CNN strong view: permute segments, then jitter.
-PatchTST strong view: mild jitter then mask patches (no permutation — that
-breaks the absolute patch order the Transformer positional embeddings use).
+PatchTST and DINOv3 strong views: mild jitter then mask time spans. Neither
+permutes, because both add a position vector to each token and a shuffled
+timeline would be read as a real order.
 Input shape is ``(N, C, T)``. The same scale factor is shared across channels
 so a multivariate window stays one sample. Permutation shuffles time for every
 channel together.
@@ -24,13 +25,22 @@ def DataTransform(sample, config) -> tuple[torch.Tensor, torch.Tensor]:
     x = _as_numpy(sample)
     aug = config.augmentation
     weak = scaling(jitter(x, sigma=aug.weak_jitter_ratio), sigma=aug.jitter_scale_ratio)
-    if getattr(config, "encoder", "cnn") == "patchtst":
+    encoder = getattr(config, "encoder", "cnn")
+    if encoder == "patchtst":
         pt = config.patchtst
         strong = mask_patches(
             jitter(x, sigma=aug.patchtst_jitter_ratio),
             patch_len=pt.patch_len,
             patch_stride=pt.patch_stride,
             mask_ratio=aug.patchtst_mask_ratio,
+        )
+    elif encoder == "dinov3":
+        d3 = config.dinov3
+        strong = mask_patches(
+            jitter(x, sigma=aug.dinov3_jitter_ratio),
+            patch_len=d3.mask_patch_len,
+            patch_stride=d3.mask_patch_stride,
+            mask_ratio=aug.dinov3_mask_ratio,
         )
     else:
         strong = jitter(
