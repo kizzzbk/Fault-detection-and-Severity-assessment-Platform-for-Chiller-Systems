@@ -6,10 +6,10 @@ functions, temporal-contrasting module, and windowed RP-1043 splits are
 unchanged. The supported task is 8-way `fault_id` classification on windows
 of shape `(B, C, T)`.
 
-`--encoder cnn` and `--encoder patchtst` keep their previous behaviour.
+`--encoder cnn` keeps the original conv encoder.
 `--encoder dinov3` selects `Dinov3Encoder`.
 
-CNN and PatchTST train from random initialisation. DINOv3 does not: the ViT
+CNN trains from random initialisation. DINOv3 does not: the ViT
 weights come from Meta’s public checkpoint and stay frozen unless
 `--finetune-encoder` is set. Full training and a held-out comparison against
 CNN have not been recorded in this repository.
@@ -85,7 +85,7 @@ The CNN strong view permutes time segments and then applies a large jitter
 (`σ = 0.8`). DINOv3 adds a fixed positional vector to each patch, so a
 shuffled timeline would be read as a real order and the contrastive loss
 would pull two different orders together. The DINOv3 strong view therefore
-follows the PatchTST policy: mild jitter (`σ = 0.2`) then mask about 40% of
+uses mild jitter (`σ = 0.2`) then mask about 40% of
 time spans (`mask_patch_len = 8`, `mask_patch_stride = 8`). Coefficients live
 in `AugmentConfig` (`dinov3_jitter_ratio`, `dinov3_mask_ratio`) and are not
 shared with the CNN permute view.
@@ -100,7 +100,6 @@ shared with the CNN permute view.
 | [`scripts/train.py`](scripts/train.py) | `--encoder dinov3`, `--dinov3-variant`, `--img-size`, default batch 16 | Expose the swap without a second entrypoint |
 | [`pyproject.toml`](pyproject.toml) | `transformers>=4.56` | `AutoModel.from_pretrained` is required to read the checkpoint |
 | [`src/chiller_fault_detection/models/model.py`](src/chiller_fault_detection/models/model.py) | Comment only | CNN file stays the conv `base_Model` |
-| [`src/chiller_fault_detection/models/fixmatch.py`](src/chiller_fault_detection/models/fixmatch.py) | Comment only | FixMatch already calls `build_encoder` / `_maybe_freeze_for_linear` |
 
 `TC.py`, `loss.py`, and `attention.py` are unchanged. They only read
 `features` as `(B, 128, N)`. The public loaders and residualiser are
@@ -175,7 +174,7 @@ Smaller images if memory is tight. `img_size` must be a multiple of 16 and
 uv run python scripts/train.py --encoder dinov3 --img-size 64 --batch-size 32
 ```
 
-`--batch-size` omitted: CNN and PatchTST use 128; DINOv3 uses 16. A written
+`--batch-size` omitted: CNN uses 128; DINOv3 uses 16. A written
 `--batch-size` is kept as-is. Outputs go to
 `artifacts/{method}_{encoder}[/ _ft]`.
 
@@ -241,7 +240,7 @@ not freeze again.
 | Shared `TC` and loss coefficients | Unchanged files; DINOv3 must emit 128-channel features |
 | Dedicated smoke script | Not present |
 | Full CA-TCC / TS-TCC run with `--encoder dinov3` | Not recorded in this repository |
-| Held-out comparison with CNN or PatchTST | Not recorded |
+| Held-out comparison with CNN | Not recorded |
 | `--finetune-encoder` and variants other than `vits16` | Not recorded |
 
 Report accuracy / F1 on the existing val and test splits after a full run.
@@ -262,7 +261,7 @@ likely to exhaust memory; the CLI default of 16 exists for that reason.
 | `Could not load DINOv3 weights` | Accept the Hugging Face license and run `huggingface-cli login` |
 | `transformers` ImportError | `uv sync` so `transformers>=4.56` is installed |
 | `features_len` / token-count error | `img_size` must be a positive multiple of 16 and `N > 6` |
-| `Unknown encoder 'dinov3'` | Use the current `scripts/train.py`; older copies only listed `cnn` / `patchtst` |
+| `Unknown encoder 'dinov3'` | Use the current `scripts/train.py`; this branch only lists `cnn` / `dinov3` |
 | Out of memory | `--img-size 64` and a smaller `--batch-size`; stay on `vits16` |
 | Backbone still in train mode | Default path must call `freeze_backbone()`; `Dinov3Encoder.train()` keeps the ViT in `eval()` |
 | Artifact overwrites a CNN run | Confirm the output directory is `artifacts/{method}_dinov3`, not `*_cnn` |
