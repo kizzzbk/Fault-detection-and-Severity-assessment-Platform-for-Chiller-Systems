@@ -2,8 +2,8 @@
 
 Weak view: jitter then scale (Section 3.1).
 CNN strong view: permute segments, then jitter.
-PatchTST and DINOv3 strong views: mild jitter then mask time spans. Neither
-permutes, because both add a position vector to each token and a shuffled
+DINOv3 strong view: mild jitter then mask time spans. It does not permute,
+because the ViT adds a position vector to each patch and a shuffled
 timeline would be read as a real order.
 Input shape is ``(N, C, T)``. The same scale factor is shared across channels
 so a multivariate window stays one sample. Permutation shuffles time for every
@@ -26,15 +26,7 @@ def DataTransform(sample, config) -> tuple[torch.Tensor, torch.Tensor]:
     aug = config.augmentation
     weak = scaling(jitter(x, sigma=aug.weak_jitter_ratio), sigma=aug.jitter_scale_ratio)
     encoder = getattr(config, "encoder", "cnn")
-    if encoder == "patchtst":
-        pt = config.patchtst
-        strong = mask_patches(
-            jitter(x, sigma=aug.patchtst_jitter_ratio),
-            patch_len=pt.patch_len,
-            patch_stride=pt.patch_stride,
-            mask_ratio=aug.patchtst_mask_ratio,
-        )
-    elif encoder == "dinov3":
+    if encoder == "dinov3":
         d3 = config.dinov3
         strong = mask_patches(
             jitter(x, sigma=aug.dinov3_jitter_ratio),
@@ -65,7 +57,7 @@ def scaling(x, sigma: float = 1.1):
 
 
 def mask_patches(x, patch_len: int, patch_stride: int, mask_ratio: float = 0.4):
-    """Zero a random subset of patches, same idea as PatchTST masked pretraining."""
+    """Zero a random subset of time spans for the DINOv3 strong view."""
     x = _as_numpy(x)
     n_win, _, length = x.shape
     if patch_len < 1 or patch_stride < 1:

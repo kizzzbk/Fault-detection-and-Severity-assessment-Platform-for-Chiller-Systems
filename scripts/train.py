@@ -1,4 +1,4 @@
-"""CLI: train TS-TCC, CA-TCC or CA-TCC-FixMatch and write the report under artifacts."""
+"""CLI: train TS-TCC or CA-TCC with the CNN or DINOv3 encoder."""
 
 import argparse
 import logging
@@ -7,16 +7,14 @@ from pathlib import Path
 import torch
 
 from chiller_fault_detection.config import ARTIFACTS_DIR
-from chiller_fault_detection.models.fixmatch import FixMatchConfig, run_ca_tcc_fixmatch
 from chiller_fault_detection.models.trainer import (
     Dinov3Config,
-    PatchTSTConfig,
     TrainConfig,
     run,
     run_ca_tcc,
 )
 
-METHODS = ("ts-tcc", "ca-tcc", "ca-tcc-fixmatch")
+METHODS = ("ts-tcc", "ca-tcc")
 
 
 def _run_name(method: str, encoder: str) -> str:
@@ -40,16 +38,16 @@ def main() -> None:
         "--batch-size",
         type=int,
         default=None,
-        help="default 16 for dinov3, 128 for cnn and patchtst",
+        help="default 16 for dinov3, 128 for cnn",
     )
     parser.add_argument("--window", type=int, default=128)
     parser.add_argument("--stride", type=int, default=64)
     parser.add_argument("--method", choices=METHODS, default="ca-tcc")
     parser.add_argument(
         "--encoder",
-        choices=("cnn", "patchtst", "dinov3"),
+        choices=("cnn", "dinov3"),
         default="cnn",
-        help="cnn = TS-TCC conv; patchtst = PatchTST; dinov3 = pretrained DINOv3 ViT",
+        help="cnn = TS-TCC conv; dinov3 = pretrained DINOv3 ViT",
     )
     parser.add_argument("--label-fraction", type=float, default=0.01)
     parser.add_argument(
@@ -71,19 +69,6 @@ def main() -> None:
     )
     parser.add_argument("--out-dir", type=Path, default=None)
     parser.add_argument("--device", type=str, default=None)
-    parser.add_argument("--patch-len", type=int, default=None)
-    parser.add_argument("--patch-stride", type=int, default=None)
-    parser.add_argument("--d-model", type=int, default=None)
-    parser.add_argument("--n-layers", type=int, default=None)
-    parser.add_argument("--n-heads", type=int, default=None)
-    parser.add_argument("--d-ff", type=int, default=None)
-    parser.add_argument(
-        "--fixmatch-tau",
-        type=float,
-        default=0.8,
-        help="ca-tcc-fixmatch only: keep pseudo labels with max softmax above this "
-        "(default: FixMatchConfig.tau)",
-    )
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(message)s")
@@ -98,20 +83,6 @@ def main() -> None:
     if batch_size is None:
         batch_size = 16 if args.encoder == "dinov3" else 128
 
-    patchtst = PatchTSTConfig()
-    if args.patch_len is not None:
-        patchtst.patch_len = args.patch_len
-    if args.patch_stride is not None:
-        patchtst.patch_stride = args.patch_stride
-    if args.d_model is not None:
-        patchtst.d_model = args.d_model
-    if args.n_layers is not None:
-        patchtst.n_layers = args.n_layers
-    if args.n_heads is not None:
-        patchtst.n_heads = args.n_heads
-    if args.d_ff is not None:
-        patchtst.d_ff = args.d_ff
-
     config = TrainConfig(
         encoder=args.encoder,
         num_epoch=args.epochs,
@@ -119,17 +90,11 @@ def main() -> None:
         batch_size=batch_size,
         window=args.window,
         stride_windows=args.stride,
-        patchtst=patchtst,
         dinov3=Dinov3Config(variant=args.dinov3_variant, img_size=args.img_size),
         finetune_encoder=args.finetune_encoder,
     )
     device = torch.device(device_name)
-    if args.method == "ca-tcc-fixmatch":
-        fixmatch = (
-            FixMatchConfig() if args.fixmatch_tau is None else FixMatchConfig(tau=args.fixmatch_tau)
-        )
-        run_ca_tcc_fixmatch(config, fixmatch, out_dir, device, args.label_fraction)
-    elif args.method == "ca-tcc":
+    if args.method == "ca-tcc":
         run_ca_tcc(config, out_dir, device, args.label_fraction)
     else:
         run(config, out_dir, device)

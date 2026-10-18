@@ -1,8 +1,7 @@
 """Original TS-TCC CNN encoder.
 
-Keep this file as the conv ``base_Model``. PatchTST is ``patchtst.PatchTSTEncoder``.
-DINOv3 is ``dinov3.Dinov3Encoder``. All three expose
-``forward(x) -> (logits, features)``; switch them with ``--encoder``.
+Keep this file as the conv ``base_Model``. DINOv3 is ``dinov3.Dinov3Encoder``.
+Both expose ``forward(x) -> (logits, features)``; switch them with ``--encoder``.
 """
 
 from torch import nn
