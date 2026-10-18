@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import joblib
@@ -14,7 +15,7 @@ from chiller_fault_detection.config import KW_MAX, KW_MIN
 from chiller_fault_detection.data.public.load import add_derived_features
 from chiller_fault_detection.data.public.preprocess import Residualizer, apply_residualizer
 from chiller_fault_detection.labels import ID_TO_LABEL
-from chiller_fault_detection.models.trainer import TrainConfig, build_encoder
+from chiller_fault_detection.models.model import base_Model
 from demo.cnn_schema import (
     CKPT_NAME,
     CNN_FEATURE_COLUMNS,
@@ -294,16 +295,36 @@ def _resolve_ckpt(root: Path) -> Path:
     )
 
 
+def _cnn_features_len(length: int, kernel_size: int = 8, stride: int = 1) -> int:
+    """Temporal length after the three conv blocks in ``base_Model``."""
+
+    def _conv(size: int, kernel: int, step: int, padding: int) -> int:
+        return (size + 2 * padding - kernel) // step + 1
+
+    def _pool(size: int) -> int:
+        return (size + 2 - 2) // 2 + 1
+
+    length = _pool(_conv(length, kernel_size, stride, kernel_size // 2))
+    length = _pool(_conv(length, 8, 1, 4))
+    length = _pool(_conv(length, 8, 1, 4))
+    return int(length)
+
+
 def load_cnn_encoder(ckpt_path: Path, device: str):
     import torch
 
-    config = TrainConfig(
-        encoder="cnn",
+    # Keep this path free of trainer.py (matplotlib/seaborn/einops) so Cloud
+    # can import the demo from demo/requirements.txt alone.
+    config = SimpleNamespace(
         input_channels=CNN_INPUT_CHANNELS,
-        window=WINDOW,
-        stride_windows=STRIDE,
+        kernel_size=8,
+        stride=1,
+        final_out_channels=128,
+        dropout=0.35,
+        features_len=_cnn_features_len(WINDOW),
+        num_classes=len(ID_TO_LABEL),
     )
-    model = build_encoder(config)
+    model = base_Model(config)
     payload = torch.load(ckpt_path, map_location=device, weights_only=False)
     state = payload["model_state_dict"] if isinstance(payload, dict) and "model_state_dict" in payload else payload
     model.load_state_dict(state)
