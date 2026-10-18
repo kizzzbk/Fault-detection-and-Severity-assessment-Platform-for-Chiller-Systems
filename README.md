@@ -186,57 +186,51 @@ uv run python scripts/train.py --encoder dinov3 --img-size 64 --batch-size 32
 The loss code path is the original `model_train`. Replacing the encoder
 changes how `features` and `logits` are produced, not the objectives.
 
-Let \(f_1, f_2\) be the two augmented `features` tensors after L2
+`f1` and `f2` are the two augmented `features` tensors after L2
 normalisation on the channel axis. `TC` returns a temporal-contrasting term
-and a projected vector \(z\) (or \(h\) in SupCon). Temperature for NT-Xent
-is \(\tau = 0.2\). \(K = 6\) future steps.
+and a projected vector `z` (or `h` in SupCon). NT-Xent uses temperature
+0.2. Temporal contrasting looks `K = 6` steps ahead.
 
 **Stage 1 (self-supervised, TS-TCC and CA-TCC):**
 
-\[
-\mathcal{L}_{\mathrm{ssl}}
-= \mathcal{L}_{\mathrm{tc}}(f_1,f_2)+\mathcal{L}_{\mathrm{tc}}(f_2,f_1)
-+ 0.7\,\mathcal{L}_{\mathrm{NT\text{-}Xent}}(z_1,z_2)
-\]
+```text
+L_ssl = L_tc(f1, f2) + L_tc(f2, f1) + 0.7 * L_NTXent(z1, z2)
+```
 
 **CA-TCC stage 4 (SupCon on pseudo-labels):**
 
-\[
-\mathcal{L}_{\mathrm{sup}}
-= 0.01\bigl(\mathcal{L}_{\mathrm{tc}}(f_1,f_2)+\mathcal{L}_{\mathrm{tc}}(f_2,f_1)\bigr)
-+ 0.1\,\mathcal{L}_{\mathrm{SupCon}}(h_1,h_2,\hat{y})
-\]
+```text
+L_sup = 0.01 * (L_tc(f1, f2) + L_tc(f2, f1)) + 0.1 * L_SupCon(h1, h2, y_hat)
+```
 
 **Labelled stages** (`ft_1p`, `train_linear`):
 
-\[
-\mathcal{L}_{\mathrm{ce}}=\mathrm{CrossEntropy}(\mathrm{logits}(x),y)
-\]
+```text
+L_ce = CrossEntropy(logits(x), y)
+```
 
 `TC` is not stepped on labelled stages. `ReduceLROnPlateau` is applied only
 there.
 
-Write \(\theta_{\mathrm{ViT}}\), \(\theta_{\mathrm{proj}}\),
-\(\theta_{\mathrm{head}}\), \(\theta_{\mathrm{TC}}\) for the backbone,
+`theta_vit`, `theta_proj`, `theta_head`, and `theta_tc` are the backbone,
 `feature_proj`, `logits`, and temporal module. The update is ordinary Adam
 on parameters with `requires_grad`:
 
-\[
-\theta \leftarrow \theta - \eta\nabla_\theta\mathcal{L}.
-\]
+```text
+theta <- theta - lr * grad(L)
+```
 
 | Stage | CNN updates | DINOv3 updates (default) |
 | --- | --- | --- |
-| 1 self-supervised | conv + \(\theta_{\mathrm{TC}}\) | \(\theta_{\mathrm{proj}}\), \(\theta_{\mathrm{TC}}\) |
-| 2 CA-TCC `ft_1p` | conv + head | \(\theta_{\mathrm{proj}}\), \(\theta_{\mathrm{head}}\) |
-| 4 SupCon | conv + \(\theta_{\mathrm{TC}}\) | \(\theta_{\mathrm{proj}}\), \(\theta_{\mathrm{TC}}\) |
+| 1 self-supervised | conv + `theta_tc` | `theta_proj`, `theta_tc` |
+| 2 CA-TCC `ft_1p` | conv + head | `theta_proj`, `theta_head` |
+| 4 SupCon | conv + `theta_tc` | `theta_proj`, `theta_tc` |
 | 5 linear probe | head only (`logits` in the name) | head only; projection is frozen in `_maybe_freeze_for_linear` |
 
-Default DINOv3 keeps \(\nabla_{\theta_{\mathrm{ViT}}}\mathcal{L}=0\) on
-every stage. Encoder and `TC` share one learning rate (no param groups):
-\(3\cdot 10^{-4}\) when the ViT is frozen, \(10^{-5}\) when
-`--finetune-encoder` is set. In the latter case stage 5 does not freeze
-again.
+Default DINOv3 keeps `grad(theta_vit) = 0` on every stage. Encoder and `TC`
+share one learning rate (no param groups): `3e-4` when the ViT is frozen,
+`1e-5` when `--finetune-encoder` is set. In the latter case stage 5 does
+not freeze again.
 
 ## 6. Status and limitations
 
