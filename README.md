@@ -1,86 +1,128 @@
 # Thay encoder bằng DINOv3
 
-DINOv3 được thêm như một encoder thứ ba, cạnh CNN (`base_Model`) và PatchTST. Chọn nó bằng `--encoder dinov3`. CNN và PatchTST vẫn chạy như cũ.
+CA-TCC / TS-TCC giữ nguyên vòng train, loss, module temporal contrasting (`TC`) và dữ liệu cửa sổ `(B, C, T)`. Phần đổi là khối encoder: CNN (`base_Model`) được thay bằng ViT DINOv3 đã pretrain trên ảnh, cộng một lớp chiếu để `features` vẫn đúng contract mà `TC` đang đọc.
 
-Mục đích là dùng một ViT đã học sẵn trên ảnh làm phần rút đặc trưng cho cửa sổ cảm biến chiller, trong khi vòng train TS-TCC / CA-TCC không phải viết lại. Vì vậy encoder mới vẫn trả đúng contract mà module temporal contrasting đang đọc: `forward(x)` cho `(logits, features)`, với `features` có shape `(B, final_out_channels, N)` và `N` lớn hơn `TC.timesteps` (mặc định 6).
+`--encoder cnn` và `--encoder patchtst` không đổi. `--encoder dinov3` mới gọi `Dinov3Encoder`.
 
-DINOv3 bản thân chỉ là backbone. Nó nhận ảnh 3 kênh và trả token, không trả logit lớp lỗi. Lớp chiếu token và head phân loại nằm trong encoder mới để khít contract đó.
+## Pretrained checkpoint
 
-## Contract và ý nghĩa của `N`
+Trọng số ViT **không được train trong bài này**. Chúng là checkpoint DINOv3 của Meta, pretrain trên LVD-1689M, tải qua Hugging Face:
 
-Input vẫn là cửa sổ `(B, C, T)`. Với cấu hình mặc định thì `C = 19` cột cảm biến và `T = 128`.
+| `--dinov3-variant` | Repo Hugging Face | Embedding |
+| --- | --- | --- |
+| `vits16` (mặc định) | `facebook/dinov3-vits16-pretrain-lvd1689m` | 384 |
+| `vits16plus` | `facebook/dinov3-vits16plus-pretrain-lvd1689m` | — |
+| `vitb16` | `facebook/dinov3-vitb16-pretrain-lvd1689m` | 768 |
+| `vitl16` | `facebook/dinov3-vitl16-pretrain-lvd1689m` | — |
 
-`logits` có shape `(B, num_classes)`. Đây là đầu ra của head, dùng khi train có nhãn, khi đánh giá, và khi gán pseudo-label.
+`load_dinov3_backbone` trong [`src/chiller_fault_detection/models/dinov3.py`](src/chiller_fault_detection/models/dinov3.py) gọi `transformers.AutoModel.from_pretrained`. Lần đầu checkpoint được ghi vào cache Hugging Face trên máy (`~/.cache/huggingface/hub/`). Repo không chứa file `.pt` của ViT; CNN trong bài thì train từ đầu, không có bước tải này.
 
-`features` có shape `(B, 128, N)`. `128` là `final_out_channels`, số kênh mà module `TC` đang chờ. `N` với DINOv3 không còn là 18 của CNN. `N` là số patch của ViT: `(img_size / patch_size) ** 2`. Ảnh mặc định 224 và patch 16 cho lưới 14×14, nên `N = 196`.
+Repo Meta đang gated: chấp nhận license trên trang model, rồi `huggingface-cli login`. Thiếu gói `transformers>=4.56` hoặc chưa login thì hàm báo đúng việc đó.
 
-## `src/chiller_fault_detection/models/dinov3.py`
+CNN không có pretrained checkpoint. Mọi conv trong `base_Model` khởi tạo ngẫu nhiên và học trên cửa sổ RP-1043.
 
-File này là encoder mới. Nó không thay file CNN. `base_Model` vẫn được gọi khi `--encoder cnn`.
+## Nhúng DINOv3 vào pipeline
 
-`HF_MODEL_IDS` map tên ngắn (`vits16`, `vitb16`, …) sang repo Hugging Face `facebook/dinov3-*-pretrain-lvd1689m`. Mặc định là `vits16` (khoảng 21 triệu tham số, embedding 384) để lần train đầu không phải tải ViT lớn. `vitb16` có embedding 768.
+DINOv3 nhận ảnh 3 kênh, không nhận cảm biến. Encoder mới là lớp bọc: vẽ cửa sổ thành ảnh, chạy ViT, bỏ token không dùng, chiếu về đúng shape `TC` đang chờ.
 
-`n_dino_tokens(img_size, patch_size)` tính `N` trước khi tải trọng số. `TrainConfig` gọi hàm này để điền `features_len`. Ảnh phải chia hết cho patch size. Với `timesteps = 6`, cạnh ảnh nhỏ nhất dùng được là 64, vì 64/16 = 4 và `N = 16`. Cạnh 32 chỉ ra 4 token và bị `TrainConfig` từ chối.
+```
+cửa sổ x ∈ R^{B×C×T}          C = 19, T = 128  (giống CNN)
+        │
+        ▼
+  rasterize + resize 224×224 + lặp 3 kênh + chuẩn hóa ImageNet
+        │
+        ▼
+  DINOv3 ViT  (pretrained; đóng gradient nếu không --finetune-encoder)
+        │
+        ▼
+  bỏ CLS và register token, giữ N patch token
+        │
+        ▼
+  feature_proj: Conv1d 1×1 + BN + GELU     384 → 128   (vits16)
+        │
+        ├──────── features ∈ R^{B×128×N}   ──► module TC (không sửa)
+        │
+        └──────── flatten → Linear tên logits ──► 8 lớp fault_id
+```
 
-`load_dinov3_backbone(variant)` gọi `transformers.AutoModel.from_pretrained`. Lần đầu sẽ tải checkpoint. Repo của Meta trên Hugging Face đang gated: cần chấp nhận license trên trang model rồi `huggingface-cli login`. Nếu thiếu gói hoặc chưa đăng nhập, hàm báo lỗi chỉ rõ việc đó.
+`forward(x)` vẫn trả `(logits, features)` như CNN. `logits` có shape `(B, 8)`. `features` có shape `(B, 128, N)`:
 
-`Dinov3Encoder.forward` làm bốn việc nối tiếp. Đầu tiên `_windows_to_images` co từng cửa sổ về `[0, 1]`, coi 19 kênh là chiều cao và 128 bước là chiều rộng, phóng lên ảnh vuông, lặp thành 3 kênh, rồi chuẩn hóa ImageNet. 19 kênh cảm biến không được đưa thẳng vào ViT như ảnh RGB. Tiếp theo backbone đọc ảnh đó. Token CLS và 4 register token bị bỏ, chỉ patch token được giữ. `feature_proj` chiếu mỗi token từ chiều embedding của ViT (384 với `vits16`) về `final_out_channels` (128) bằng conv 1×1, BatchNorm và GELU, ra `features` dạng `(B, 128, N)`. Cuối cùng `self.logits`, một `Linear`, flatten map đó thành logit lớp. Tên module có chữ `logits` vì bước linear probe chỉ giữ gradient cho parameter mang tên này.
+- CNN: `N = 18` (ba khối conv + pool trên `T = 128`)
+- DINOv3: `N = (img_size / patch_size)²`. Mặc định `224 / 16` → lưới 14×14 → `N = 196`
 
-`freeze_backbone` tắt gradient của ViT và chuyển nó sang eval. `train()` được ghi đè vì `Trainer` gọi `model.train()` mỗi vòng. Nếu không ghi đè, ViT bị kéo lại train mode và DropPath làm feature pretrained chạy ngẫu nhiên dù trọng số đã đóng. Khi backbone đóng, `_hidden` còn bọc forward trong `torch.no_grad()` để không xây graph qua hàng chục triệu tham số.
+`N` phải lớn hơn `TC.timesteps` (mặc định 6). Ảnh cạnh 32 chỉ ra 4 token và bị `TrainConfig` từ chối; cạnh nhỏ nhất dùng được là 64 (`N = 16`).
 
-## `trainer.py`
+Việc vẽ ảnh nằm trong `Dinov3Encoder._windows_to_images`: co từng cửa sổ về `[0, 1]`, coi 19 kênh là chiều cao và 128 bước là chiều rộng, phóng bilinear lên ảnh vuông, lặp thành RGB, trừ mean / chia std ImageNet. 19 cột cảm biến không được coi là ảnh RGB.
 
-`Dinov3Config` giữ những thứ chỉ DINOv3 dùng: biến thể, cạnh ảnh, patch size, và độ dài đoạn bị che ở strong view. CNN và PatchTST không đọc dataclass này.
+`TC.py`, `loss.py` và `attention.py` không sửa. Chúng chỉ thấy `features` dạng `(B, 128, N)`. Chiếu token về 128 kênh là để giữ được điều đó. `data/load.py` và `data/preprocess.py` cũng không sửa: cửa sổ trên đĩa vẫn `(B, C, T)`.
 
-`TrainConfig.dinov3` mang config đó. `__post_init__` thêm nhánh `encoder == "dinov3"` và gán `features_len = n_dino_tokens(...)`. Không có nhánh này thì tên `dinov3` bị coi là encoder lạ ngay lúc tạo config. Kiểm tra `features_len > TC.timesteps` dùng chung, nên ảnh quá nhỏ vẫn bị chặn.
+## Loss
 
-`build_encoder` trả `Dinov3Encoder`. Nếu không bật `--finetune-encoder`, hàm gọi `freeze_backbone()` ngay tại đây, trước stage 1. Mục đích là stage self-supervised không được ghi đè trọng số pretrained. Lớp `feature_proj` và `logits` vẫn học được. Nếu bật fine-tune, ViT mở gradient và learning rate bị hạ.
+Loss **không đổi khi thay encoder**. Cùng `model_train` trong [`trainer.py`](src/chiller_fault_detection/models/trainer.py), cùng `NTXentLoss` / `SupConLoss`, cùng hệ số 0.7 / 0.01 / 0.1. Encoder chỉ đổi cách tính `features` (và `logits` ở stage có nhãn).
 
-`_encoder_lr` thêm một nhánh. PatchTST vẫn tối đa `1e-4`. DINOv3 chỉ bị kéo xuống `1e-5` khi ViT thực sự được cập nhật. Backbone đóng thì projection, head và module `TC` giữ `3e-4`. Cùng một learning rate đang được dùng cho cả encoder lẫn `TC`, nên hạ rate của ViT cũng hạ rate của `TC`. Chưa tách param group.
+Gọi \(f_1, f_2\) là `features` của hai view (đã `L2`-normalize theo kênh). Module `TC` trả temporal-contrasting loss và vector \(z\) (hoặc \(h\) ở SupCon) từ `projection_head`.
 
-`_freeze_encoder` không sửa. Nó vẫn tắt mọi parameter trừ tên có chữ `logits`.
+**Stage 1 — self-supervised (TS-TCC và CA-TCC):**
 
-`_maybe_freeze_for_linear` vẫn là cổng của stage cuối. PatchTST, hoặc bất kỳ encoder nào bật `--finetune-encoder`, train toàn bộ. CNN và DINOv3 không bật cờ thì rơi vào `_freeze_encoder`. Với DINOv3, lần freeze này xảy ra sau khi projection đã được các stage contrastive học xong, nên stage cuối chỉ cập nhật head trên nhãn thật. ViT thì đã đóng từ `build_encoder`.
+\[
+\mathcal{L}_{\mathrm{ssl}}
+= \mathcal{L}_{\mathrm{tc}}(f_1, f_2) + \mathcal{L}_{\mathrm{tc}}(f_2, f_1)
++ 0.7\,\mathcal{L}_{\mathrm{NT\text{-}Xent}}(z_1, z_2)
+\]
 
-`_experiment_header` ghi thêm biến thể, cạnh ảnh, số token, learning rate và việc backbone có bị đóng hay không, để report phân biệt các lần chạy DINOv3.
+\(\mathcal{L}_{\mathrm{tc}}\) là NCE trên \(K = 6\) bước tương lai (`TC.timesteps`). \(\mathcal{L}_{\mathrm{NT\text{-}Xent}}\) dùng cosine similarity, nhiệt độ \(\tau = 0.2\), chia cho \(2B\).
 
-Các hàm `run` và `run_ca_tcc` không đổi thứ tự stage. Chúng đã gọi `build_encoder` và `_maybe_freeze_for_linear`, nên lịch freeze ở trên áp vào cả TS-TCC và CA-TCC.
+**Stage 4 CA-TCC — SupCon trên pseudo-label:**
 
-Lịch đó, khi không fine-tune, diễn ra như sau. Từ stage 1, ViT đứng yên. Stage self-supervised và SupCon cập nhật `feature_proj` cùng module `TC`, vì loss lấy `features`. Stage có nhãn (fine-tune trên một phần nhãn, rồi linear probe) cập nhật `logits`. Đến stage linear probe, `feature_proj` cũng bị đóng và chỉ còn head.
+\[
+\mathcal{L}_{\mathrm{sup}}
+= 0.01\bigl(\mathcal{L}_{\mathrm{tc}}(f_1, f_2) + \mathcal{L}_{\mathrm{tc}}(f_2, f_1)\bigr)
++ 0.1\,\mathcal{L}_{\mathrm{SupCon}}(h_1, h_2, \hat{y})
+\]
 
-Khi `--finetune-encoder`, ViT học từ stage 1 với learning rate `1e-5`, và stage cuối không đóng gì thêm.
+**Stage có nhãn** (`ft_1p`, `train_linear`):
 
-## `augmentations.py` và `AugmentConfig`
+\[
+\mathcal{L}_{\mathrm{ce}} = \mathrm{CrossEntropy}(\mathrm{logits}(x), y)
+\]
 
-`DataTransform` thêm nhánh `encoder == "dinov3"`. Bản yếu vẫn là jitter rồi scale, giống mọi encoder. Bản mạnh là jitter nhẹ rồi che một phần các đoạn thời gian (`mask_patch_len = 8`, `mask_patch_stride = 8`, che khoảng 40%).
+Hai view và `TC` không vào loss này. `ReduceLROnPlateau` chỉ bước ở các stage có nhãn.
 
-Nhánh này tồn tại vì bản mạnh của CNN cắt chuỗi rồi xáo thứ tự. CNN nhìn cục bộ nên xáo vẫn còn dạng sóng. DINOv3 cộng vector vị trí cố định cho từng patch. Xáo thời gian khiến nội dung của đoạn sau đứng vào vị trí của đoạn trước, và contrastive loss sẽ ép hai chuỗi khác nhau phải giống nhau. Che đoạn và giữ đúng chỗ thì bản mạnh vẫn là cùng một cửa sổ. PatchTST đã làm vậy vì cùng lý do. Hệ số jitter và mask của DINOv3 nằm riêng trong `AugmentConfig` (`dinov3_jitter_ratio`, `dinov3_mask_ratio`) để không dùng sigma 0.8 của CNN.
+## Parameter updates
 
-## `scripts/train.py`
+Gọi \(\theta_{\mathrm{ViT}}\) là backbone pretrained, \(\theta_{\mathrm{proj}}\) là `feature_proj`, \(\theta_{\mathrm{head}}\) là `logits`, \(\theta_{\mathrm{TC}}\) là module temporal contrasting.
 
-`--encoder` nhận thêm `dinov3`. `--dinov3-variant` chọn `vits16`, `vits16plus`, `vitb16` hoặc `vitl16`. `--img-size` là cạnh ảnh vuông, mặc định 224, phải chia hết cho 16. Hai cờ này chỉ có tác dụng khi encoder là DINOv3. Chúng được gói vào `Dinov3Config` rồi đưa vào `TrainConfig`.
+Optimizer là Adam trên **đúng parameter còn `requires_grad`** (`filter` trong `_optimizers`). Cập nhật:
 
-`--batch-size` để trống thì CNN và PatchTST vẫn dùng 128, còn DINOv3 dùng 16. Một forward ViT trên ảnh 224 nặng hơn CNN cửa sổ 128, nên batch 128 dễ hết bộ nhớ. Truyền `--batch-size` thì số đó được giữ nguyên.
+\[
+\theta \leftarrow \theta - \eta\,\nabla_\theta \mathcal{L},
+\qquad \theta \in \{\theta : \texttt{requires\_grad}=\mathrm{true}\}
+\]
 
-`--finetune-encoder` với DINOv3 không chỉ mở head ở stage cuối. Nó mở cả ViT từ stage 1.
+CNN không có \(\theta_{\mathrm{ViT}}\). Toàn bộ conv học từ stage 1. Đến linear probe, `_freeze_encoder` chỉ giữ gradient cho tên chứa `logits`.
 
-Tên thư mục artifact vẫn là `{method}_{encoder}`, nên một lần chạy DINOv3 không ghi đè artifact của CNN.
+DINOv3 **mặc định** (`không` `--finetune-encoder`) đóng ViT ngay trong `build_encoder`: `requires_grad=False`, `eval()`, và `forward` bọc `torch.no_grad()`. `train()` bị ghi đè để `Trainer` gọi `model.train()` mỗi epoch không kéo ViT lại train mode (DropPath sẽ làm feature pretrained ngẫu nhiên). Do đó với mọi stage:
 
-## `pyproject.toml`
+\[
+\nabla_{\theta_{\mathrm{ViT}}}\mathcal{L} = 0
+\]
 
-Thêm dependency `transformers>=4.56`. `AutoModel` của gói này là cách tải backbone. PyTorch đã có sẵn, không đủ để đọc checkpoint Hugging Face.
+| Stage | CNN cập nhật | DINOv3 cập nhật (mặc định) |
+| --- | --- | --- |
+| 1 self-supervised | conv + \(\theta_{\mathrm{TC}}\) | \(\theta_{\mathrm{proj}}\), \(\theta_{\mathrm{TC}}\) |
+| 2 CA-TCC `ft_1p` (1% nhãn) | conv + head | \(\theta_{\mathrm{proj}}\), \(\theta_{\mathrm{head}}\) |
+| 4 SupCon | conv + \(\theta_{\mathrm{TC}}\) | \(\theta_{\mathrm{proj}}\), \(\theta_{\mathrm{TC}}\) |
+| 5 linear probe | chỉ head | chỉ \(\theta_{\mathrm{head}}\) (`feature_proj` đóng ở `_maybe_freeze_for_linear`) |
 
-## Chỗ chỉ đổi lời mô tả
+Learning rate chung cho encoder và `TC` (chưa tách param group): CNN và DINOv3 đóng backbone dùng \(\eta = 3\cdot 10^{-4}\). Bật `--finetune-encoder` thì \(\theta_{\mathrm{ViT}}\) mở từ stage 1 và \(\eta\) hạ còn \(10^{-5}\) (`_encoder_lr`). Stage 5 lúc đó không freeze thêm.
 
-`model.py` vẫn là CNN. Dòng đầu file ghi thêm rằng DINOv3 là encoder thứ ba và cùng contract.
+`--batch-size` để trống: CNN 128, DINOv3 16. Một forward ViT trên ảnh 224 nặng hơn ba conv trên cửa sổ 128.
 
-`fixmatch.py` không đổi thuật toán. Comment stage 5 được sửa cho khớp: CNN và DINOv3 train head, PatchTST và `--finetune-encoder` train cả mạng. FixMatch gọi `build_encoder` và `_maybe_freeze_for_linear`, nên nó nhận lịch freeze mới mà không cần sửa vòng lặp.
+## Augmentation (chỗ còn lại phải đổi)
 
-## File không đổi
+View yếu giữ jitter rồi scale, giống CNN. View mạnh thì không.
 
-`TC.py`, `loss.py` và `attention.py` không đổi vì chúng chỉ thấy `features` dạng `(B, final_out_channels, N)`. Chiếu token về 128 kênh là để giữ được điều đó.
-
-`data/preprocess.py` và `data/load.py` không đổi. Cửa sổ vẫn là `(B, C, T)`. Việc vẽ cửa sổ thành ảnh nằm trong `forward` của encoder.
+CNN cắt chuỗi rồi xáo thứ tự (`permutation` + jitter \(\sigma = 0.8\)). DINOv3 cộng vector vị trí cố định cho từng patch; xáo thời gian khiến đoạn sau đứng vào vị trí đoạn trước, và contrastive loss sẽ ép hai thứ tự khác nhau phải giống nhau. View mạnh của DINOv3 vì vậy là jitter nhẹ (\(\sigma = 0.2\)) rồi che khoảng 40% đoạn thời gian (`mask_patch_len = 8`, `mask_patch_stride = 8`), giữ đúng chỗ. PatchTST đã làm vậy vì cùng lý do. Hệ số nằm riêng trong `AugmentConfig` (`dinov3_jitter_ratio`, `dinov3_mask_ratio`).
 
 ## Cách chạy
 
@@ -94,8 +136,10 @@ Fine-tune cả ViT:
 uv run python scripts/train.py --encoder dinov3 --finetune-encoder --dinov3-variant vits16
 ```
 
-Ảnh nhỏ hơn khi thiếu bộ nhớ, miễn là chia hết cho 16 và `N > 6`. Cạnh 64 là mức nhỏ nhất với `timesteps = 6`:
+Ảnh nhỏ hơn khi thiếu bộ nhớ, miễn chia hết cho 16 và \(N > 6\). Cạnh 64 là mức nhỏ nhất với `timesteps = 6`:
 
 ```bash
 uv run python scripts/train.py --encoder dinov3 --img-size 64 --batch-size 32
 ```
+
+Thư mục artifact vẫn `{method}_{encoder}`, nên lần chạy DINOv3 không ghi đè CNN.
