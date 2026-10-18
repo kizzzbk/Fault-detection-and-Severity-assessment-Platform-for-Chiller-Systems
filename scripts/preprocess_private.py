@@ -15,8 +15,8 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from chiller_fault_detection.data.load import FEATURE_COLUMNS
-from chiller_fault_detection.data.preprocess_private import (
+from chiller_fault_detection.data.public.load import FEATURE_COLUMNS
+from chiller_fault_detection.data.private.preprocess_private import (
     DEFAULT_OUT,
     DEFAULT_SCHEMA,
     DEFAULT_SOURCE,
@@ -54,6 +54,13 @@ def main() -> None:
     print(f"mapped_populated={len(populated)}/{len(mapped_columns)}: {populated}")
     print(f"feature_columns_nan={missing_features}")
     print(f"source_file={frame['source_file'].unique().tolist()}")
+    print(
+        "labels="
+        f"fault:{frame['fault'].unique().tolist()} "
+        f"fault_id:{frame['fault_id'].unique().tolist()} "
+        f"severity_level:{frame['severity_level'].unique().tolist()} "
+        f"path_label:{frame['path_label'].unique().tolist()}"
+    )
     print(f"time_range=[{frame['time'].iloc[0]}, {frame['time'].iloc[-1]}]")
 
 
