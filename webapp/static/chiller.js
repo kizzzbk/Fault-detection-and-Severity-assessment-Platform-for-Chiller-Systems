@@ -98,9 +98,6 @@
       <g id="evap-boil">${Array.from({ length: 18 }, (_, i) => `<circle cx="${370 + i * 27}" cy="${505 - (i % 3) * 6}" r="${1.5 + (i % 3)}" fill="#a5f3fc" class="bubble" style="animation-delay:${-i * 0.17}s"/>`).join("")}</g>
     </g>
 
-    <text x="600" y="296" text-anchor="middle" class="svg-tag-shell" id="tag-cond">TRC –  ·  PRC –</text>
-    <text x="600" y="468" text-anchor="middle" class="svg-tag-shell" id="tag-evap">TRE –  ·  PRE –</text>
-
     <!-- ===== refrigerant: suction (evap -> compressor) ===== -->
     <path d="M858 470 H930 V152 H780" stroke="#13303d" stroke-width="26" fill="none" stroke-linejoin="round"/>
     <path d="M858 470 H930 V152 H780" stroke="#7dd3fc" stroke-width="4" fill="none" class="flow" id="suction" opacity=".85" stroke-linejoin="round"/>
@@ -141,7 +138,6 @@
     <g id="sump">
       <rect x="544" y="205" width="112" height="35" rx="7" fill="#151b23" stroke="#4b5a6e"/>
       <g clip-path="url(#clipSump)"><rect id="oil-level" x="546" y="222" width="108" height="20" fill="url(#oil)" opacity=".85"/></g>
-      <text x="600" y="228" text-anchor="middle" class="svg-tag-shell" id="tag-oil">ΔP –</text>
     </g>
 
     <!-- water tags -->
@@ -150,6 +146,11 @@
     <text x="258" y="440" class="svg-tag-k">TEI</text><text x="286" y="440" class="svg-tag" id="tag-tei">–</text>
     <text x="258" y="518" class="svg-tag-k">TEO</text><text x="286" y="518" class="svg-tag" id="tag-teo">–</text>
     <text x="1185" y="626" text-anchor="end" class="svg-cap">RP-1043 · 90 TON · R134a</text>
+
+    <!-- on-machine tags on top layer for maximum clarity -->
+    <text x="600" y="296" text-anchor="middle" class="svg-tag-shell" id="tag-cond">TRC –  ·  PRC –</text>
+    <text x="600" y="468" text-anchor="middle" class="svg-tag-shell" id="tag-evap">TRE –  ·  PRE –</text>
+    <text x="600" y="228" text-anchor="middle" class="svg-tag-shell" id="tag-oil">ΔP –</text>
 
     <g id="leaders"></g>
     `;

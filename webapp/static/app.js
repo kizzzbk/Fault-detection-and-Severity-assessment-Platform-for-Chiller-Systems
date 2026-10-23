@@ -208,6 +208,9 @@
     $("#guide-card").hidden = true;
     $("#telemetry").hidden = false;
     $("#run-overlay").hidden = false;
+    $("#infer-log").innerHTML = "";
+    const wins = res.diagnosis.windows;
+    let shown = 0;
     const cv = $("#strip"), ctx = cv.getContext("2d");
     const dpr = window.devicePixelRatio || 1;
     cv.width = cv.clientWidth * dpr; cv.height = 150 * dpr;
@@ -246,10 +249,17 @@
           }
           ctx.stroke();
         }
-        // buffer progress
+        // buffer progress + window inference log
         const buf = idx < 128 ? idx : 64 + ((idx - 128) % 64);
         $("#buf-n").textContent = `${buf} / 128`;
         $("#buf-fill").style.width = (buf / 128) * 100 + "%";
+        while (shown < wins.length && wins[shown].end_idx <= idx) {
+          const w = wins[shown++];
+          const li = document.createElement("li");
+          li.style.setProperty("--fc", color(w.fault));
+          li.innerHTML = `<span>#${pad(shown)}</span><span>${hhmm(w.t1_s)}</span><span class="lbl">${FAULTS[w.fault].code}</span><span class="cf">${(w.confidence * 100).toFixed(0)}%</span>`;
+          $("#infer-log").prepend(li);
+        }
         $("#t-clock").textContent = `${hhmm(idx * S.cfg.dt_s)} / ${hhmm(total)}`;
         $("#ro-pct").textContent = Math.round(p * 100) + "%";
         $("#ro-fill").style.strokeDashoffset = 326.7 * (1 - p);
