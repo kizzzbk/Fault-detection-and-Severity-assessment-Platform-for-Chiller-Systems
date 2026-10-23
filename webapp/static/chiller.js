@@ -98,8 +98,8 @@
       <g id="evap-boil">${Array.from({ length: 18 }, (_, i) => `<circle cx="${370 + i * 27}" cy="${505 - (i % 3) * 6}" r="${1.5 + (i % 3)}" fill="#a5f3fc" class="bubble" style="animation-delay:${-i * 0.17}s"/>`).join("")}</g>
     </g>
 
-    <text x="600" y="296" text-anchor="middle" class="svg-tag" id="tag-cond">TRC –  ·  PRC –</text>
-    <text x="600" y="468" text-anchor="middle" class="svg-tag" id="tag-evap">TRE –  ·  PRE –</text>
+    <text x="600" y="296" text-anchor="middle" class="svg-tag-shell" id="tag-cond">TRC –  ·  PRC –</text>
+    <text x="600" y="468" text-anchor="middle" class="svg-tag-shell" id="tag-evap">TRE –  ·  PRE –</text>
 
     <!-- ===== refrigerant: suction (evap -> compressor) ===== -->
     <path d="M858 470 H930 V152 H780" stroke="#13303d" stroke-width="26" fill="none" stroke-linejoin="round"/>
@@ -109,7 +109,7 @@
     <!-- discharge (compressor -> condenser) -->
     <path d="M700 196 V252" stroke="#3a1414" stroke-width="24" fill="none"/>
     <path d="M700 196 V252" stroke="#f87171" stroke-width="4" fill="none" class="flow" id="discharge"/>
-    <text x="712" y="232" class="svg-tag-k" id="tag-dis">TR_dis –</text>
+    <text x="712" y="232" class="svg-tag-shell" id="tag-dis">TR_dis –</text>
 
     <!-- liquid line + EXV (condenser -> evaporator) -->
     <path d="M822 352 V424" stroke="#0c2a36" stroke-width="16" fill="none"/>
@@ -126,7 +126,7 @@
       ${Array.from({ length: 9 }, (_, i) => `<line x1="${518 + i * 15}" x2="${518 + i * 15}" y1="112" y2="192" stroke="#151b23" stroke-width="3" opacity=".55"/>`).join("")}
       <rect x="486" y="128" width="16" height="48" rx="4" fill="#2a3340" stroke="#4b5a6e"/>
       <text x="580" y="98" text-anchor="middle" class="svg-cap">MOTOR</text>
-      <text x="580" y="158" text-anchor="middle" class="svg-tag" id="tag-kw">– kW</text>
+      <text x="580" y="158" text-anchor="middle" class="svg-tag-shell" id="tag-kw">– kW</text>
       <circle cx="720" cy="152" r="58" fill="url(#volute)" stroke="#5b6b80" stroke-width="2"/>
       <circle cx="720" cy="152" r="44" fill="#0e131a" stroke="#2f3a48"/>
       <g class="rotor" id="impeller">
@@ -141,7 +141,7 @@
     <g id="sump">
       <rect x="544" y="205" width="112" height="35" rx="7" fill="#151b23" stroke="#4b5a6e"/>
       <g clip-path="url(#clipSump)"><rect id="oil-level" x="546" y="222" width="108" height="20" fill="url(#oil)" opacity=".85"/></g>
-      <text x="600" y="227" text-anchor="middle" class="svg-tag-k" fill="#111" id="tag-oil">OIL –</text>
+      <text x="600" y="228" text-anchor="middle" class="svg-tag-shell" id="tag-oil">ΔP –</text>
     </g>
 
     <!-- water tags -->
