@@ -4,16 +4,16 @@
 (function () {
   const NS = "http://www.w3.org/2000/svg";
 
-  // Probe layout: card box (x, y in svg units, width = 234) + target point on the machine.
+  // Probe layout: card box (x, y in svg units, width = 216) + target point on the machine.
   const PROBES = {
-    TCA:     { x: 14,  y: 16,  side: "L", target: [480, 300], component: "Condenser tubes" },
-    CDW_DT:  { x: 14,  y: 226, side: "L", target: [300, 303], component: "Condenser water" },
-    CHW_DT:  { x: 14,  y: 440, side: "L", target: [300, 474], component: "Chilled water" },
-    PO_net:  { x: 276, y: 16,  side: "B", target: [548, 222], component: "Oil sump" },
-    PRC:     { x: 952, y: 16,  side: "R", target: [790, 268], component: "Condenser shell" },
-    TRC_sub: { x: 952, y: 250, side: "R", target: [822, 388], component: "Liquid line / EXV" },
+    TCA:     { x: 10,  y: 16,  side: "L", target: [480, 300], component: "Condenser tubes" },
+    CDW_DT:  { x: 10,  y: 226, side: "L", target: [290, 303], component: "Condenser water" },
+    CHW_DT:  { x: 10,  y: 440, side: "L", target: [290, 474], component: "Chilled water" },
+    PO_net:  { x: 236, y: 16,  side: "B", target: [548, 222], component: "Oil sump" },
+    PRC:     { x: 970, y: 16,  side: "R", target: [790, 268], component: "Condenser shell" },
+    TRC_sub: { x: 970, y: 250, side: "R", target: [822, 388], component: "Liquid line / EXV" },
   };
-  const CARD_W = 234;
+  const CARD_W = 216;
 
   function tubes(x0, x1, y0, y1, n, cls) {
     let s = "";
@@ -140,26 +140,17 @@
       <g clip-path="url(#clipSump)"><rect id="oil-level" x="546" y="222" width="108" height="20" fill="url(#oil)" opacity=".85"/></g>
     </g>
 
-    <!-- water tags -->
-    <text x="258" y="270" class="svg-tag-k">TCI</text><text x="286" y="270" class="svg-tag" id="tag-tci">–</text>
-    <text x="258" y="346" class="svg-tag-k">TCO</text><text x="286" y="346" class="svg-tag" id="tag-tco">–</text>
-    <text x="258" y="440" class="svg-tag-k">TEI</text><text x="286" y="440" class="svg-tag" id="tag-tei">–</text>
-    <text x="258" y="518" class="svg-tag-k">TEO</text><text x="286" y="518" class="svg-tag" id="tag-teo">–</text>
+    <!-- water tags: right-aligned before the shell cap at x=318 to prevent any clipping -->
+    <text x="310" y="270" text-anchor="end"><tspan class="svg-tag-k">TCI </tspan><tspan class="svg-tag" id="tag-tci">–</tspan></text>
+    <text x="310" y="348" text-anchor="end"><tspan class="svg-tag-k">TCO </tspan><tspan class="svg-tag" id="tag-tco">–</tspan></text>
+    <text x="310" y="440" text-anchor="end"><tspan class="svg-tag-k">TEI </tspan><tspan class="svg-tag" id="tag-tei">–</tspan></text>
+    <text x="310" y="520" text-anchor="end"><tspan class="svg-tag-k">TEO </tspan><tspan class="svg-tag" id="tag-teo">–</tspan></text>
     <text x="1185" y="626" text-anchor="end" class="svg-cap">RP-1043 · 90 TON · R134a</text>
 
-    <!-- on-machine tags on top layer for maximum clarity -->
-    <g class="tag-shell-plate">
-      <rect x="410" y="278" width="380" height="30" rx="7" fill="#121820" stroke="#3d4f61" stroke-width="1.6" opacity="0.95"/>
-      <text x="600" y="298" text-anchor="middle" class="svg-tag-shell" id="tag-cond">TRC –  ·  PRC –</text>
-    </g>
-    <g class="tag-shell-plate">
-      <rect x="410" y="450" width="380" height="30" rx="7" fill="#121820" stroke="#3d4f61" stroke-width="1.6" opacity="0.95"/>
-      <text x="600" y="470" text-anchor="middle" class="svg-tag-shell" id="tag-evap">TRE –  ·  PRE –</text>
-    </g>
-    <g class="tag-shell-plate">
-      <rect x="546" y="212" width="108" height="26" rx="6" fill="#121820" stroke="#3d4f61" stroke-width="1.6" opacity="0.95"/>
-      <text x="600" y="230" text-anchor="middle" class="svg-tag-shell" id="tag-oil">ΔP –</text>
-    </g>
+    <!-- on-machine tags directly on shells without rectangular boxes, pure white font -->
+    <text x="600" y="296" text-anchor="middle" class="svg-tag-shell" id="tag-cond">TRC –  ·  PRC –</text>
+    <text x="600" y="468" text-anchor="middle" class="svg-tag-shell" id="tag-evap">TRE –  ·  PRE –</text>
+    <text x="600" y="228" text-anchor="middle" class="svg-tag-shell" id="tag-oil">ΔP –</text>
 
     <g id="leaders"></g>
     `;

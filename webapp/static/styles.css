@@ -122,9 +122,9 @@ main { position: relative; z-index: 1; padding: 8px 16px 20px; max-width: 1780px
 .probes { position: absolute; inset: 0; pointer-events: none; }
 
 .probe {
-  position: absolute; width: 20%; pointer-events: auto;
+  position: absolute; width: 18%; pointer-events: auto;
   background: rgba(255, 255, 255, 0.96); border: 1.5px solid var(--line2); border-radius: 10px;
-  padding: 10px 12px 10px; backdrop-filter: blur(8px);
+  padding: 8px 11px; backdrop-filter: blur(8px);
   transition: border-color .2s, box-shadow .25s, background .25s;
   box-shadow: 0 4px 16px rgba(37, 50, 55, 0.09);
   font-size: clamp(9px, 0.82vw, 12px);
@@ -301,14 +301,15 @@ main { position: relative; z-index: 1; padding: 8px 16px 20px; max-width: 1780px
   animation: blink 1.2s infinite;
 }
 
-/* White bold high-contrast tags directly on the chiller shells */
+/* White bold tags directly on the chiller shells - light, clean, pure white */
 .svg-tag-shell {
   fill: #ffffff !important;
   font-family: var(--mono);
-  font-size: 16px !important;
-  font-weight: 800 !important;
-  letter-spacing: 0.03em;
+  font-size: 15px !important;
+  font-weight: 700 !important;
+  letter-spacing: 0.02em;
   stroke: none !important;
+  filter: none !important;
 }
 .svg-tag { font-family: var(--mono); font-size: 14.5px; fill: var(--text); font-weight: 800; }
 .svg-tag-k { font-family: var(--mono); font-size: 11px; fill: var(--muted); letter-spacing: .08em; font-weight: 700; }
