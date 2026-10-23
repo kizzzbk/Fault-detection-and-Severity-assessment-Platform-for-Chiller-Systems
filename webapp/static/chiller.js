@@ -148,9 +148,18 @@
     <text x="1185" y="626" text-anchor="end" class="svg-cap">RP-1043 · 90 TON · R134a</text>
 
     <!-- on-machine tags on top layer for maximum clarity -->
-    <text x="600" y="296" text-anchor="middle" class="svg-tag-shell" id="tag-cond">TRC –  ·  PRC –</text>
-    <text x="600" y="468" text-anchor="middle" class="svg-tag-shell" id="tag-evap">TRE –  ·  PRE –</text>
-    <text x="600" y="228" text-anchor="middle" class="svg-tag-shell" id="tag-oil">ΔP –</text>
+    <g class="tag-shell-plate">
+      <rect x="410" y="278" width="380" height="30" rx="7" fill="#121820" stroke="#3d4f61" stroke-width="1.6" opacity="0.95"/>
+      <text x="600" y="298" text-anchor="middle" class="svg-tag-shell" id="tag-cond">TRC –  ·  PRC –</text>
+    </g>
+    <g class="tag-shell-plate">
+      <rect x="410" y="450" width="380" height="30" rx="7" fill="#121820" stroke="#3d4f61" stroke-width="1.6" opacity="0.95"/>
+      <text x="600" y="470" text-anchor="middle" class="svg-tag-shell" id="tag-evap">TRE –  ·  PRE –</text>
+    </g>
+    <g class="tag-shell-plate">
+      <rect x="546" y="212" width="108" height="26" rx="6" fill="#121820" stroke="#3d4f61" stroke-width="1.6" opacity="0.95"/>
+      <text x="600" y="230" text-anchor="middle" class="svg-tag-shell" id="tag-oil">ΔP –</text>
+    </g>
 
     <g id="leaders"></g>
     `;
