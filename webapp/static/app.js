@@ -82,7 +82,6 @@
           <div class="track"></div><div class="fill"></div>${ticks.join("")}<div class="knob"></div>
           <input type="range" id="slider-${v}" aria-label="${sliders[0].label}" min="${min}" max="${max}" step="${step}" value="${nominal}">
         </div>
-        <div class="rng-foot"><span>${lay.component}</span><span class="nom">nominal ${nominal.toFixed(1)}</span></div>
         <div class="probe-tags"></div>`;
       host.appendChild(el);
       S.values[v] = nominal;
@@ -124,8 +123,7 @@
       const up = sl.direction > 0;
       return `<li data-f="${f}" data-var="${sl.var}" style="--fc:${color(f)}">
         <span class="g-code">${FAULTS[f].code}</span>
-        <div><div class="g-name">${FAULTS[f].name}</div>
-          <div class="g-how">${up ? "Raise" : "Lower"} <b>${sl.var}</b> on ${Chiller.PROBES[sl.var].component.toLowerCase()} · SL4 ≈ ${sl.levels["4"].toFixed(1)} ${sl.unit}</div></div>
+        <div class="g-name">${FAULTS[f].name}</div>
         <span class="g-dir">${up ? "▲" : "▼"}<span class="g-sev"></span></span>
       </li>`;
     }).join("");
@@ -159,11 +157,6 @@
   function refresh() {
     Object.keys(S.probes).forEach(paintProbe);
     const a = armed();
-    const keys = Object.keys(a);
-    $("#k-armed").textContent = keys.length;
-    $("#armed-list").innerHTML = keys.length
-      ? `<span class="muted">Armed:</span> ` + ORDER.filter((f) => a[f]).map((f) => chip(f, ` SL${a[f]}`)).join("")
-      : `<span class="muted">No fault armed — the machine will run healthy.</span>`;
     $$("#guide-list li").forEach((li) => {
       const s = a[li.dataset.f];
       li.classList.toggle("armed", !!s);
@@ -210,17 +203,14 @@
   function playback(res) {
     const cols = res.columns, rows = res.rows, N = rows.length;
     const ci = Object.fromEntries(cols.map((c, i) => [c, i]));
-    const wins = res.diagnosis.windows;
     const total = N * S.cfg.dt_s;
     const ms = 6500 + S.hours * 1100;
     $("#guide-card").hidden = true;
     $("#telemetry").hidden = false;
     $("#run-overlay").hidden = false;
-    $("#infer-log").innerHTML = "";
     const cv = $("#strip"), ctx = cv.getContext("2d");
     const dpr = window.devicePixelRatio || 1;
     cv.width = cv.clientWidth * dpr; cv.height = 150 * dpr;
-    let shown = 0;
     const series = [["TCO", css.getPropertyValue("--warm")], ["TCI", css.getPropertyValue("--amber")], ["TEI", css.getPropertyValue("--ice")], ["TEO", css.getPropertyValue("--cyan")]];
     let lo = Infinity, hi = -Infinity;
     for (const r of rows) for (const [k] of series) { lo = Math.min(lo, r[ci[k]]); hi = Math.max(hi, r[ci[k]]); }
@@ -256,17 +246,10 @@
           }
           ctx.stroke();
         }
-        // buffer + inference log
+        // buffer progress
         const buf = idx < 128 ? idx : 64 + ((idx - 128) % 64);
         $("#buf-n").textContent = `${buf} / 128`;
         $("#buf-fill").style.width = (buf / 128) * 100 + "%";
-        while (shown < wins.length && wins[shown].end_idx <= idx) {
-          const w = wins[shown++];
-          const li = document.createElement("li");
-          li.style.setProperty("--fc", color(w.fault));
-          li.innerHTML = `<span>#${pad(shown)}</span><span>${hhmm(w.t1_s)}</span><span class="lbl">${FAULTS[w.fault].code} · ${FAULTS[w.fault].name}</span><span class="cf">${(w.confidence * 100).toFixed(0)}%</span>`;
-          $("#infer-log").prepend(li);
-        }
         $("#t-clock").textContent = `${hhmm(idx * S.cfg.dt_s)} / ${hhmm(total)}`;
         $("#ro-pct").textContent = Math.round(p * 100) + "%";
         $("#ro-fill").style.strokeDashoffset = 326.7 * (1 - p);
@@ -285,22 +268,15 @@
     const injected = ORDER.filter((f) => res.injected[f]);
 
     $("#r-count").textContent = faultSegs.length;
-    $("#r-count-sub").textContent = `${detected.length} fault type${detected.length === 1 ? "" : "s"} · ${d.n_windows} windows scored`;
     $("#r-time").textContent = dur(d.fault_seconds);
-    $("#r-time-sub").textContent = `${((d.fault_seconds / total) * 100).toFixed(1)}% of ${dur(total)} analysed`;
     $("#r-health").textContent = (d.health_ratio * 100).toFixed(1) + "%";
     $("#r-health").style.color = d.health_ratio > 0.8 ? "var(--ok)" : d.health_ratio > 0.5 ? "var(--amber)" : "var(--bad)";
     requestAnimationFrame(() => ($("#r-health-bar").style.width = d.health_ratio * 100 + "%"));
 
-    // verdict: injected vs detected + time-to-detect
+    // verdict: injected vs detected
     const hit = injected.filter((f) => detected.includes(f));
     const missed = injected.filter((f) => !detected.includes(f));
     const extra = detected.filter((f) => !injected.includes(f));
-    const ttd = injected.map((f) => {
-      const i0 = res.scenario.indexOf(f);
-      const w = d.windows.find((w) => w.fault === f && w.end_idx > i0);
-      return w ? `${FAULTS[f].code} ${dur(Math.max(dt, w.t1_s - i0 * dt))}` : null;
-    }).filter(Boolean);
     let cls = "ok", icon = "✓", title;
     if (!injected.length) { title = extra.length ? "Healthy run — model raised transient alerts" : "Healthy run confirmed — no fault detected"; cls = extra.length ? "part" : "ok"; icon = extra.length ? "!" : "✓"; }
     else if (!missed.length) title = `Model recognised ${hit.length === 1 ? "the injected fault" : `all ${hit.length} injected faults`}`;
@@ -312,7 +288,6 @@
       <div class="v-rows">
         <div><span class="eyebrow">Injected</span><div class="chips">${injected.length ? injected.map((f) => chip(f, ` SL${res.injected[f]}`)).join("") : chip("normal")}</div></div>
         <div><span class="eyebrow">Detected</span><div class="chips">${detected.length ? detected.map((f) => chip(f)).join("") : chip("normal")}</div></div>
-        ${ttd.length ? `<div><span class="eyebrow">Time to detect</span><div class="mono small">${ttd.join(" · ")}</div></div>` : ""}
         <div><span class="eyebrow">Run</span><div class="mono small">${S.hours}h · ${res.rows.length} samples @ ${dt}s</div></div>
       </div>`;
 
@@ -401,7 +376,7 @@
       g += `<line x1="${x(t)}" x2="${x(t)}" y1="${T}" y2="${H - B + 4}" stroke="rgba(148,163,184,.12)" stroke-dasharray="2 4"/>`;
       g += `<text x="${x(t)}" y="${H - B + 20}" text-anchor="middle" class="svg-tag-k">${hhmm(t)}</text>`;
     }
-    g += `<text x="${(L + W - Rm) / 2}" y="${H - B + 38}" text-anchor="middle" class="svg-cap">ELAPSED TIME (h:mm)</text>`;
+    g += `<text x="${(L + W - Rm) / 2}" y="${H - B + 38}" text-anchor="middle" class="svg-cap">ELAPSED TIME</text>`;
     // window bars: each window owns its stride slot, drawn with gaps (not connected)
     const stride = 64 * dt;
     d.windows.forEach((w, k) => {
@@ -424,7 +399,7 @@
       }
     }
     $("#timeline").innerHTML = g;
-    $("#tl-meta").textContent = `${d.windows.length} windows · 128 × 10 s · stride 64`;
+    $("#tl-meta").textContent = `${d.windows.length} windows`;
     const tip = $("#tip"), card = $(".timeline-card");
     $$("#timeline .bar").forEach((b) => {
       b.addEventListener("mousemove", (e) => {

@@ -18,9 +18,9 @@
         <g class="brand-rotor"><path d="M16 5v22M5 16h22M8.2 8.2l15.6 15.6M23.8 8.2 8.2 23.8" stroke="currentColor" stroke-width="1.6" /></g>
         <circle cx="16" cy="16" r="3.5" fill="currentColor" />
       </svg>
-      <div>
+      <div class="brand-title-wrap">
         <div class="brand-name">CHILLER<span>//</span>TWIN</div>
-        <div class="brand-sub">Edge-AI fault diagnosis · 90-ton centrifugal · R134a</div>
+        <span class="pill" id="machine-pill"><i></i><span>IDLE</span></span>
       </div>
     </div>
     <nav class="steps" aria-label="Workflow">
@@ -29,7 +29,6 @@
       <button class="step" id="step-2" data-screen="report" disabled><b>02</b> Diagnosis</button>
     </nav>
     <div class="status">
-      <span class="pill" id="machine-pill"><i></i><span>IDLE</span></span>
       <span class="clock mono" id="clock">--:--:--</span>
     </div>
   </header>
@@ -49,7 +48,6 @@
               <div><span>Load</span><b id="k-kw">–</b><em>kW</em></div>
               <div><span>Lift</span><b id="k-lift">–</b><em>psi</em></div>
               <div><span>Est. COP</span><b id="k-cop">–</b></div>
-              <div><span>Faults armed</span><b id="k-armed">0</b></div>
             </div>
           </div>
 
@@ -68,7 +66,6 @@
                 <button data-h="1">1h</button><button data-h="2" class="on">2h</button><button data-h="3">3h</button><button data-h="4">4h</button><button data-h="5">5h</button>
               </div>
             </div>
-            <div class="ctl-armed" id="armed-list"><span class="muted">No fault armed — the machine will run healthy.</span></div>
             <button class="btn ghost" id="btn-reset" title="Return every slider to its nominal value">Reset</button>
             <button class="btn primary" id="btn-run">
               <svg viewBox="0 0 24 24"><path d="M7 4l13 8-13 8z" fill="currentColor"/></svg>
@@ -80,7 +77,6 @@
         <aside class="side">
           <div class="card guide" id="guide-card">
             <div class="card-head"><div><div class="eyebrow">Playbook</div><h2>How to inject a fault</h2></div></div>
-            <p class="muted small">Drag the probe on the machine in the arrow direction. Tick marks show RP-1043 severity levels SL1–SL4. Click a row to locate its probe.</p>
             <ol class="guide-list" id="guide-list"></ol>
           </div>
 
@@ -95,8 +91,6 @@
               <div class="buffer-head small"><span>Sliding window buffer</span><span class="mono" id="buf-n">0 / 128</span></div>
               <div class="buffer-bar"><div id="buf-fill"></div></div>
             </div>
-            <div class="infer-head small">CNN inference · window 128 × 19 ch · stride 64</div>
-            <ul class="infer-log mono" id="infer-log"></ul>
           </div>
         </aside>
       </div>
@@ -109,9 +103,9 @@
       <div class="report-grid">
         <div class="col-left">
           <div class="kpi-row">
-            <div class="card kpi"><div class="eyebrow">Number of fault detections</div><div class="kpi-v mono" id="r-count">0</div><div class="small muted" id="r-count-sub"></div></div>
-            <div class="card kpi"><div class="eyebrow">Time with faults</div><div class="kpi-v mono" id="r-time">0</div><div class="small muted" id="r-time-sub"></div></div>
-            <div class="card kpi health"><div class="eyebrow">Health ratio</div><div class="kpi-v mono" id="r-health">0%</div><div class="hbar"><div id="r-health-bar"></div></div><div class="small muted">normal time / total time</div></div>
+            <div class="card kpi"><div class="eyebrow">Faults Detected</div><div class="kpi-v mono" id="r-count">0</div></div>
+            <div class="card kpi"><div class="eyebrow">Time with faults</div><div class="kpi-v mono" id="r-time">0</div></div>
+            <div class="card kpi health"><div class="eyebrow">Normal / Total Run Time</div><div class="kpi-v mono" id="r-health">0%</div><div class="hbar"><div id="r-health-bar"></div></div></div>
           </div>
           <div class="card breakdown">
             <div class="card-head"><div><div class="eyebrow">Time share</div><h2>Fault breakdown</h2></div></div>
@@ -131,7 +125,7 @@
         <div class="col-right">
           <div class="card timeline-card">
             <div class="card-head">
-              <div><div class="eyebrow">Per-window predictions</div><h2>Diagnosis timeline</h2></div>
+              <div><div class="eyebrow">Per-window predictions</div></div>
               <div class="small muted mono" id="tl-meta"></div>
             </div>
             <svg id="timeline" viewBox="0 0 760 520"></svg>
