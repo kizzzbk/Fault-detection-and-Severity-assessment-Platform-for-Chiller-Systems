@@ -1,0 +1,12 @@
+# Pings the deployed demo so free hosts (HF Spaces / Render) never go to sleep.
+# Set repository variable DEMO_URL, e.g. https://<user>-chiller-twin.hf.space
+name: keep-demo-awake
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - run: curl -fsS --retry 3 --max-time 60 "${{ vars.DEMO_URL }}/healthz"
