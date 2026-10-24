@@ -9,4 +9,10 @@ jobs:
   ping:
     runs-on: ubuntu-latest
     steps:
-      - run: curl -fsS --retry 3 --max-time 60 "${{ vars.DEMO_URL }}/healthz"
+      - name: Ping healthz
+        run: |
+          URL="${{ vars.DEMO_URL }}"
+          URL="${URL:-https://fault-detection-and-severity-assessment.onrender.com}"
+          echo "Pinging ${URL}/healthz ..."
+          curl -fsS --retry 3 --max-time 60 "${URL}/healthz"
+
