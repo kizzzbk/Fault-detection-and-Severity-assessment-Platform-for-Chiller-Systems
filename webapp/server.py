@@ -131,6 +131,7 @@ def build_stream(req: SimRequest) -> pd.DataFrame:
 
 
 @app.get("/healthz")
+@app.head("/healthz")
 def healthz() -> dict:
     return {"ok": True}
 
