@@ -162,8 +162,49 @@ class Dinov3Encoder(nn.Module):
             outputs = self.backbone(pixel_values=images)
         return outputs.last_hidden_state
 
-    def forward(self, x_in: torch.Tensor):
-        hidden = self._hidden(self._windows_to_images(x_in))
+    def apply_patch_mask(
+        self, images: torch.Tensor, mask_ratio: float = 0.4
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Vectorized 16x16 patch masking directly on (B, 3, H, W) images.
+
+        Returns:
+            masked_images: (B, 3, H, W) image tensor with selected patches zeroed out.
+            mask: (B, N) boolean tensor where True indicates masked patches.
+        """
+        b, c, h, w = images.shape
+        p = self.patch_size
+        gh = h // p
+        gw = w // p
+        n_tokens = gh * gw
+
+        # Sample random boolean mask of shape (B, n_tokens)
+        probs = torch.rand(b, n_tokens, device=images.device)
+        mask = probs < mask_ratio
+
+        # Reshape images into non-overlapping (B, n_tokens, C, P, P) patches
+        patches = (
+            images.view(b, c, gh, p, gw, p)
+            .permute(0, 2, 4, 1, 3, 5)
+            .reshape(b, n_tokens, c, p, p)
+        )
+        # Zero out the selected patches
+        patches = patches.masked_fill(mask.unsqueeze(-1).unsqueeze(-1).unsqueeze(-1), 0.0)
+
+        # Invert permutation and reshape back to (B, C, H, W)
+        masked_images = (
+            patches.view(b, gh, gw, c, p, p)
+            .permute(0, 3, 1, 4, 2, 5)
+            .reshape(b, c, h, w)
+        )
+        return masked_images, mask
+
+    def forward(self, x_in: torch.Tensor, mask_ratio: float = 0.0):
+        images = self._windows_to_images(x_in)
+        mask = None
+        if mask_ratio > 0.0 and self.training:
+            images, mask = self.apply_patch_mask(images, mask_ratio=mask_ratio)
+
+        hidden = self._hidden(images)
         n_prefix = 1 + int(self.backbone.config.num_register_tokens)
         patches = hidden[:, n_prefix:, :]
         if patches.shape[1] != self.n_tokens:
@@ -172,4 +213,7 @@ class Dinov3Encoder(nn.Module):
             )
         features = self.feature_proj(patches.transpose(1, 2))
         logits = self.logits(features.reshape(features.shape[0], -1))
+        if mask is not None:
+            return logits, features, mask
         return logits, features
+

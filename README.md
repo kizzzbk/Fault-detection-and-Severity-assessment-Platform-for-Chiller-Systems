@@ -94,16 +94,15 @@ shared with the CNN permute view.
 
 | File | Change | Reason |
 | --- | --- | --- |
-| [`src/chiller_fault_detection/models/dinov3.py`](src/chiller_fault_detection/models/dinov3.py) | Adapter, backbone loader, projection, head | Embed DINOv3 while keeping `(logits, features)` |
-| [`src/chiller_fault_detection/models/trainer.py`](src/chiller_fault_detection/models/trainer.py) | `Dinov3Config`, `features_len`, `build_encoder`, freeze, `_encoder_lr` | Select the encoder and stop ViT updates by default |
-| [`src/chiller_fault_detection/models/augmentations.py`](src/chiller_fault_detection/models/augmentations.py) | `encoder == "dinov3"` strong view | Avoid permuting a position-sensitive token sequence |
+| [`src/chiller_fault_detection/models/dinov3.py`](src/chiller_fault_detection/models/dinov3.py) | Adapter, backbone loader, projection, head, `apply_patch_mask` | Embed DINOv3; support vectorized 16×16 patch masking directly on 2D image |
+| [`src/chiller_fault_detection/models/loss.py`](src/chiller_fault_detection/models/loss.py) | `MaskedReconstructionLoss`, L2 normalization in `SupConLoss` | Bidirectional masked patch reconstruction loss; unit hypersphere normalization |
+| [`src/chiller_fault_detection/models/trainer.py`](src/chiller_fault_detection/models/trainer.py) | `Dinov3Config`, patch-level loss weighting, adapted temperature | Scale TC weight, integrate `L_recon`, and adapt temperature (0.07) for batch size 16 |
+| [`src/chiller_fault_detection/models/augmentations.py`](src/chiller_fault_detection/models/augmentations.py) | `encoder == "dinov3"` strong view delegates masking to 2D image plane | Avoid 1D raw-stride coordinate mismatch by masking directly on 16×16 image patches |
 | [`scripts/train.py`](scripts/train.py) | `--encoder dinov3`, `--dinov3-variant`, `--img-size`, default batch 16 | Expose the swap without a second entrypoint |
 | [`pyproject.toml`](pyproject.toml) | `transformers>=4.56` | `AutoModel.from_pretrained` is required to read the checkpoint |
 | [`src/chiller_fault_detection/models/model.py`](src/chiller_fault_detection/models/model.py) | Comment only | CNN file stays the conv `base_Model` |
 
-`TC.py`, `loss.py`, and `attention.py` are unchanged. They only read
-`features` as `(B, 128, N)`. The public loaders and residualiser are
-unchanged: windows on disk stay `(B, C, T)`.
+`TC.py` and `attention.py` are unchanged. Windows on disk stay `(B, C, T)`.
 
 Artifact directories remain `{method}_{encoder}` (plus `_ft` when
 `--finetune-encoder` is set), so a DINOv3 run does not overwrite CNN
@@ -182,25 +181,41 @@ uv run python scripts/train.py --encoder dinov3 --img-size 64 --batch-size 32
 
 ## 5. Loss and parameter updates
 
-The loss code path is the original `model_train`. Replacing the encoder
-changes how `features` and `logits` are produced, not the objectives.
+Replacing the encoder changes how `features` and `logits` are produced, and how
+contrastive and reconstruction objectives are weighted.
 
 `f1` and `f2` are the two augmented `features` tensors after L2
 normalisation on the channel axis. `TC` returns a temporal-contrasting term
-and a projected vector `z` (or `h` in SupCon). NT-Xent uses temperature
-0.2. Temporal contrasting looks `K = 6` steps ahead.
+and a projected vector `z` (or `h` in SupCon).
 
-**Stage 1 (self-supervised, TS-TCC and CA-TCC):**
+**Stage 1 (Self-supervised, TS-TCC and CA-TCC):**
 
+For CNN (`--encoder cnn`):
 ```text
 L_ssl = L_tc(f1, f2) + L_tc(f2, f1) + 0.7 * L_NTXent(z1, z2)
 ```
 
+For DINOv3 (`--encoder dinov3` - Approach B: Masked Feature Reconstruction):
+```text
+L_ssl = 0.1 * (L_tc(f1, f2) + L_tc(f2, f1)) + 0.7 * L_NTXent(z1, z2) + 1.0 * L_recon
+```
+where:
+* `L_recon = MSE(feat_pred[mask], feat_target[mask].detach())` computes MSE on the 16×16 patch tokens that were zeroed out on `aug2`.
+* `L_tc` weight is reduced to 0.1 to avoid 2D raster scan bias.
+* `NT-Xent` uses `temperature = 0.07` to account for the smaller batch size (16 vs 128).
+
 **CA-TCC stage 4 (SupCon on pseudo-labels):**
 
+For CNN (`--encoder cnn`):
 ```text
 L_sup = 0.01 * (L_tc(f1, f2) + L_tc(f2, f1)) + 0.1 * L_SupCon(h1, h2, y_hat)
 ```
+
+For DINOv3 (`--encoder dinov3`):
+```text
+L_sup = L_SupCon(h1, h2, y_hat)
+```
+with L2-normalized feature embeddings and `temperature = 0.07`, focusing entirely on cluster separation on pseudo-labels.
 
 **Labelled stages** (`ft_1p`, `train_linear`):
 

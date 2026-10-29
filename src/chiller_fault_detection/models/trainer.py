@@ -21,7 +21,7 @@ from chiller_fault_detection.data.load import MODEL_FEATURE_COLUMNS
 from chiller_fault_detection.labels import ID_TO_LABEL
 from chiller_fault_detection.models.TC import TC
 from chiller_fault_detection.models.augmentations import DataTransform
-from chiller_fault_detection.models.loss import NTXentLoss, SupConLoss
+from chiller_fault_detection.models.loss import MaskedReconstructionLoss, NTXentLoss, SupConLoss
 from chiller_fault_detection.models.dinov3 import Dinov3Encoder, n_dino_tokens
 from chiller_fault_detection.models.model import base_Model
 
@@ -339,19 +339,39 @@ def model_train(
         temp_cont_optimizer.zero_grad()
 
         if training_mode == "self_supervised":
-            _, features1 = model(aug1)
-            _, features2 = model(aug2)
+            if config.encoder == "dinov3":
+                _, features1 = model(aug1)
+                # Apply 16x16 patch masking directly on the 2D image plane for aug2
+                _, features2, patch_mask = model(
+                    aug2, mask_ratio=config.augmentation.dinov3_mask_ratio
+                )
+                recon_loss = MaskedReconstructionLoss()(features2, features1, patch_mask)
+            else:
+                _, features1 = model(aug1)
+                _, features2 = model(aug2)
+                recon_loss = 0.0
+
             features1 = F.normalize(features1, dim=1)
             features2 = F.normalize(features2, dim=1)
             temp_cont_loss1, zis = temporal_contr_model(features1, features2)
             temp_cont_loss2, zjs = temporal_contr_model(features2, features1)
+            temp_temperature = (
+                0.07 if config.encoder == "dinov3" else config.Context_Cont.temperature
+            )
             nt_xent = NTXentLoss(
                 device,
                 config.batch_size,
-                config.Context_Cont.temperature,
+                temp_temperature,
                 config.Context_Cont.use_cosine_similarity,
             )
-            loss = (temp_cont_loss1 + temp_cont_loss2) + 0.7 * nt_xent(zis, zjs)
+            if config.encoder == "dinov3":
+                loss = (
+                    0.1 * (temp_cont_loss1 + temp_cont_loss2)
+                    + 0.7 * nt_xent(zis, zjs)
+                    + 1.0 * recon_loss
+                )
+            else:
+                loss = (temp_cont_loss1 + temp_cont_loss2) + 0.7 * nt_xent(zis, zjs)
         elif training_mode == "SupCon":
             _, features1 = model(aug1)
             _, features2 = model(aug2)
@@ -360,9 +380,13 @@ def model_train(
             temp_cont_loss1, feat1 = temporal_contr_model(features1, features2)
             temp_cont_loss2, feat2 = temporal_contr_model(features2, features1)
             sup_features = torch.cat([feat1.unsqueeze(1), feat2.unsqueeze(1)], dim=1)
-            loss = 0.01 * (temp_cont_loss1 + temp_cont_loss2) + 0.1 * SupConLoss(device)(
-                sup_features, labels
-            )
+            sup_temp = 0.07 if config.encoder == "dinov3" else 0.2
+            if config.encoder == "dinov3":
+                loss = SupConLoss(device, temperature=sup_temp)(sup_features, labels)
+            else:
+                loss = 0.01 * (temp_cont_loss1 + temp_cont_loss2) + 0.1 * SupConLoss(
+                    device, temperature=sup_temp
+                )(sup_features, labels)
         else:
             predictions, _ = model(data)
             loss = criterion(predictions, labels)

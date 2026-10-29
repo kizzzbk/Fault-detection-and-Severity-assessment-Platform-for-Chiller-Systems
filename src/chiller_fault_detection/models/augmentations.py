@@ -27,13 +27,8 @@ def DataTransform(sample, config) -> tuple[torch.Tensor, torch.Tensor]:
     weak = scaling(jitter(x, sigma=aug.weak_jitter_ratio), sigma=aug.jitter_scale_ratio)
     encoder = getattr(config, "encoder", "cnn")
     if encoder == "dinov3":
-        d3 = config.dinov3
-        strong = mask_patches(
-            jitter(x, sigma=aug.dinov3_jitter_ratio),
-            patch_len=d3.mask_patch_len,
-            patch_stride=d3.mask_patch_stride,
-            mask_ratio=aug.dinov3_mask_ratio,
-        )
+        # 16x16 patch masking is performed directly on the 2D image plane in Dinov3Encoder
+        strong = jitter(x, sigma=aug.dinov3_jitter_ratio)
     else:
         strong = jitter(
             permutation(x, max_segments=aug.max_seg),
