@@ -148,9 +148,16 @@ The model performs **8-class multivariate time-series fault classification** on 
 ### 3.3. Physics-Informed Residualization
 Chiller measurements vary dramatically across different cooling loads and ambient conditions. Passing raw values directly leads models to confuse normal load variations with genuine equipment faults.
 - A **Linear Regression** model is fitted strictly on `normal` baseline operation against 3 operational boundary conditions:
-  $$\hat{X}_{\text{nominal}} = f(\text{TEO}, \text{TCI}, \text{kW})$$
+
+$$
+\hat{X}_{\text{nominal}} = f(\text{TEO}, \text{TCI}, \text{kW})
+$$
+
 - The input to the neural encoder is the **physical residual**:
-  $$\Delta X = X_{\text{measured}} - \hat{X}_{\text{nominal}}$$
+
+$$
+\Delta X = X_{\text{measured}} - \hat{X}_{\text{nominal}}
+$$
 - 17 residual channels are combined with 2 raw pressure channels (`PO_net`, `PO_feed`) and passed through `StandardScaler` to ensure zero mean and unit variance.
 
 ### 3.4. Output Specification
@@ -206,7 +213,10 @@ Freezing ensures that DINOv3 weights are never corrupted by small-batch telemetr
 DINOv3 expects an ImageNet-normalized 3-channel RGB image. The telemetry window is transformed in `Dinov3Encoder._windows_to_images` via a 7-step deterministic procedure:
 
 1. **Independent Window Min-Max Scaling**: Scale each window independently to $[0, 1]$:
-   $$\tilde{X} = \frac{X - \min(X)}{\max(X) - \min(X) + \epsilon}$$
+
+$$
+\tilde{X} = \frac{X - \min(X)}{\max(X) - \min(X) + \epsilon}
+$$
 2. **Channel-as-Height, Time-as-Width**: Treat sensor channels as image height and time as image width, yielding shape `(B, 1, C=19, T=128)`.
 3. **Bilinear Interpolation**: Interpolate bilinearly to a square grid `(img_size, img_size)` (default $224 \times 224$).
 4. **Channel Duplication**: Replicate the single grayscale plane across 3 RGB channels `(B, 3, 224, 224)`.
@@ -254,42 +264,69 @@ The default backbone is Meta’s [`facebook/dinov3-vits16-pretrain-lvd1689m`](ht
 The training protocol combines temporal contrasting, contextual contrastive learning, masked feature reconstruction, and supervised contrastive objectives.
 
 ### 5.1. Stage 1: Self-Supervised Contrastive & Reconstruction Loss
+
 Given two augmented views of input window $x$: weak view $x_1$ and strong view $x_2$. The encoder outputs normalized representations $f_1, f_2 \in \mathbb{R}^{B \times 128 \times N}$. The Temporal Contrasting module predicts future timesteps via autoregressive transformer blocks, yielding contextual summary vectors $z_1, z_2$.
 
 **For 1D-CNN (`--encoder cnn`):**
-$$\mathcal{L}_{\text{SSL}}^{\text{CNN}} = \mathcal{L}_{\text{TC}}(f_1, f_2) + \mathcal{L}_{\text{TC}}(f_2, f_1) + 0.7 \cdot \mathcal{L}_{\text{NT-Xent}}(z_1, z_2)$$
+
+$$
+\mathcal{L}_{\text{SSL}}^{\text{CNN}} = \mathcal{L}_{\text{TC}}(f_1, f_2) + \mathcal{L}_{\text{TC}}(f_2, f_1) + 0.7 \cdot \mathcal{L}_{\text{NT-Xent}}(z_1, z_2)
+$$
 
 Where:
 - $\mathcal{L}_{\text{TC}}$ is the contrastive temporal loss predicting forward steps across views.
 - $\mathcal{L}_{\text{NT-Xent}}$ is the normalized temperature-scaled cross-entropy loss with default temperature $\tau = 0.20$ (for batch size 128).
 
 **For DINOv3 ViT (`--encoder dinov3` - Masked Feature Reconstruction):**
-$$\mathcal{L}_{\text{SSL}}^{\text{DINOv3}} = 0.1 \cdot \left(\mathcal{L}_{\text{TC}}(f_1, f_2) + \mathcal{L}_{\text{TC}}(f_2, f_1)\right) + 0.7 \cdot \mathcal{L}_{\text{NT-Xent}}(z_1, z_2) + 1.0 \cdot \mathcal{L}_{\text{recon}}$$
+
+$$
+\mathcal{L}_{\text{SSL}}^{\text{DINOv3}} = 0.1 \cdot \left(\mathcal{L}_{\text{TC}}(f_1, f_2) + \mathcal{L}_{\text{TC}}(f_2, f_1)\right) + 0.7 \cdot \mathcal{L}_{\text{NT-Xent}}(z_1, z_2) + 1.0 \cdot \mathcal{L}_{\text{recon}}
+$$
 
 Where:
-- $\mathcal{L}_{\text{recon}} = \text{MSE}\left(\hat{f}_{\text{pred}}[\text{mask}], f_{\text{target}}[\text{mask}].\text{detach}()\right)$ calculates Mean Squared Error strictly over the $16 \times 16$ patch tokens that were masked on view $x_2$.
-- The $\mathcal{L}_{\text{TC}}$ weight is scaled down to $0.1$ to avoid 2D raster scan directional bias.
+- Masked Feature Reconstruction Loss $\mathcal{L}_{\text{recon}}$ computes Mean Squared Error strictly over the 16×16 patch tokens that were masked on view $x_2$:
+
+$$
+\mathcal{L}_{\text{recon}} = \text{MSE}\left(\hat{f}_{\text{pred}}[\text{mask}], \, f_{\text{target}}[\text{mask}].\text{detach}()\right)
+$$
+
+- The $\mathcal{L}_{\text{TC}}$ weight is scaled down to 0.1 to avoid 2D raster scan directional bias.
 - $\mathcal{L}_{\text{NT-Xent}}$ temperature is adapted to $\tau = 0.07$ to account for the smaller batch size (16 vs 128).
 
 ### 5.2. Stage 2: Supervised Fine-Tuning Loss (1% Labels)
+
 Fine-tunes the projected features and classification head using standard Cross-Entropy on the 1% labeled subset:
-$$\mathcal{L}_{\text{CE}} = - \sum_{c=1}^{8} y_c \log \left(\text{Softmax}(\text{logits}(x))_c\right)$$
+
+$$
+\mathcal{L}_{\text{CE}} = - \sum_{c=1}^{8} y_c \log \left(\text{Softmax}(\text{logits}(x))_c\right)
+$$
+
 `TC` is frozen during this stage. `ReduceLROnPlateau` scheduler manages the learning rate.
 
 ### 5.3. Stage 3: Pseudo-Labeling
+
 The model from Stage 2 generates predicted labels $\hat{y}$ for the remaining 99% unlabeled training data. Predictions with maximum softmax probability exceeding the confidence threshold are retained for Stage 4.
 
 ### 5.4. Stage 4: Supervised Contrastive Loss (SupCon)
+
 SupCon pulls representations of identical pseudo-labeled fault classes into tight clusters while repelling divergent fault classes.
 
 **For 1D-CNN (`--encoder cnn`):**
-$$\mathcal{L}_{\text{Sup}}^{\text{CNN}} = 0.01 \cdot \left(\mathcal{L}_{\text{TC}}(f_1, f_2) + \mathcal{L}_{\text{TC}}(f_2, f_1)\right) + 0.1 \cdot \mathcal{L}_{\text{SupCon}}(h_1, h_2, \hat{y})$$
+
+$$
+\mathcal{L}_{\text{Sup}}^{\text{CNN}} = 0.01 \cdot \left(\mathcal{L}_{\text{TC}}(f_1, f_2) + \mathcal{L}_{\text{TC}}(f_2, f_1)\right) + 0.1 \cdot \mathcal{L}_{\text{SupCon}}(h_1, h_2, \hat{y})
+$$
 
 **For DINOv3 ViT (`--encoder dinov3`):**
-$$\mathcal{L}_{\text{Sup}}^{\text{DINOv3}} = 1.0 \cdot \mathcal{L}_{\text{SupCon}}(h_1, h_2, \hat{y})$$
+
+$$
+\mathcal{L}_{\text{Sup}}^{\text{DINOv3}} = 1.0 \cdot \mathcal{L}_{\text{SupCon}}(h_1, h_2, \hat{y})
+$$
+
 Where feature vectors $h_1, h_2$ are explicitly $L_2$-normalized onto the unit hypersphere with temperature $\tau = 0.07$.
 
 ### 5.5. Stage 5: Linear Probe Head
+
 Freezes the feature extractor entirely and trains only the final classification linear layer (`logits`) using Cross-Entropy to evaluate representation quality.
 
 ### 5.6. Stage-by-Stage Gradient Updates Matrix
