@@ -33,6 +33,6 @@ dev = [
     "ipykernel>=7.3.0",
 ]
 demo = [
-    "plotly>=5.24",
-    "streamlit>=1.40",
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
 ]

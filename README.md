@@ -101,8 +101,8 @@ flowchart TD
     end
 
     subgraph Deployment["4. Inference & Interactive Interfaces"]
-        O --> P["Streamlit FDD Dashboard<br/>(demo/app.py - CSV/Parquet Time-Series Diagnosis)"]
-        O --> Q["Chiller Digital Twin<br/>(webapp/server.py - Physical Fault Injection)"]
+        O --> P["Chiller Digital Twin Webapp<br/>(webapp/server.py - Physical Fault Injection)"]
+        O --> Q["Live Cloud Deployment on Render<br/>(24/7 Managed Web Service)"]
         O --> R["Production Docker Container<br/>(FastAPI / Uvicorn Port 7860)"]
     end
 ```
@@ -324,12 +324,10 @@ chiller-fault-detection/
 │   │       ├── scaler.joblib            # Fitted StandardScaler
 │   │       └── residualizer.joblib      # Fitted nominal linear regression model
 │   └── figures/                         # Analytical figures and visualizations
-├── demo/                                # Streamlit FDD Diagnostic Dashboard
-│   ├── app.py                           # Streamlit main entrypoint
-│   ├── pipeline.py                      # Data ingestion, sliding window, and merging logic
+├── demo/                                # Inference Pipeline & Model Checkpoints
+│   ├── pipeline.py                      # Data ingestion, sliding window, and inference logic
 │   ├── cnn_schema.py                    # 19-channel schema definition
-│   ├── sample.csv                       # Verified sample telemetry for instant testing
-│   └── models/                          # Standalone demo model bundle
+│   └── models/                          # Production model checkpoint bundle
 │       ├── ckp_ft.pt                    # 1D-CNN checkpoint weights (430 KB)
 │       ├── residualizer.joblib
 │       └── scaler.joblib
@@ -394,8 +392,8 @@ uv sync --extra demo
 > Installed 62 packages in 1.18s
 > + torch==2.14.0
 > + transformers==4.56.0
-> + streamlit==1.40.0
 > + fastapi==0.115.0
+> + uvicorn==0.30.0
 > ```
 
 *(Optional, for DINOv3 training)*: Authenticate with Hugging Face after accepting Meta's model license:
@@ -481,24 +479,19 @@ uv run python scripts/train.py --method ca-tcc --encoder dinov3 --finetune-encod
 
 ---
 
-### Step 4: Running Interactive Demos
+### Step 4: Running the Interactive Demo
 
-#### Demo A: Streamlit FDD Dashboard (Time-Series Diagnosis)
-Interactive diagnostic dashboard for uploading `.csv` or `.parquet` sensor telemetry, computing health scores, and viewing fault timelines:
+#### Option A: Live Cloud Demo on Render
+The application is pre-configured for 24/7 cloud deployment on **Render**:
+- **Live Demo URL**: Deploy with your connected repository or Docker service.
+- **Render Deployment Setup**:
+  - **Environment**: Docker (uses the root [`Dockerfile`](Dockerfile)) or Python 3.12/3.13.
+  - **Build Command** *(Python Native)*: `pip install -r webapp/requirements.txt`
+  - **Start Command** *(Python Native)*: `uvicorn webapp.server:app --host 0.0.0.0 --port $PORT`
+  - *(Note: On Render, dependencies are managed via Docker/pip directly; `uv run` is not required in cloud deployment).*
 
-```bash
-uv run streamlit run demo/app.py
-```
-> **Expected Output**:
-> ```text
->   You can now view your Streamlit app in your browser.
->   Local URL: http://localhost:8501
->   Network URL: http://192.168.1.10:8501
-> ```
-*Usage*: Open `http://localhost:8501` in your browser. Drag and drop the provided sample file [`demo/sample.csv`](demo/sample.csv) to inspect instant sliding-window diagnostics.
-
-#### Demo B: Chiller Digital Twin Webapp (Real-Time Fault Injection)
-FastAPI backend with a dynamic HTML5/SVG chiller schematic. Allows engineers to inject physical faults via interactive sliders:
+#### Option B: Local Digital Twin Webapp (FastAPI + SVG Simulator)
+Run the dynamic HTML5/SVG chiller simulator locally with physical fault injection:
 
 ```bash
 uv run uvicorn webapp.server:app --host 0.0.0.0 --port 7860 --reload
@@ -506,12 +499,13 @@ uv run uvicorn webapp.server:app --host 0.0.0.0 --port 7860 --reload
 > **Expected Output**:
 > ```text
 > INFO:     Uvicorn running on http://0.0.0.0:7860 (Press CTRL+C to quit)
+> INFO:     Started reloader process
 > INFO:     Application startup complete.
 > ```
-*Usage*: Navigate to `http://localhost:7860`. Adjust parameters such as *Condenser approach (TCA)* or *Subcooling (TRC_sub)* and click **"Simulate & Diagnose"**.
+*Usage*: Open `http://localhost:7860` in your browser. Adjust physical sliders (e.g. *Condenser approach TCA*, *Subcooling TRC_sub*, *Discharge pressure PRC*) and click **"Simulate & Diagnose"** to observe real-time AI fault classification.
 
-#### Demo C: Docker Container Deployment
-Deploy the full Digital Twin application in an isolated container:
+#### Option C: Production Docker Container
+Run the self-contained container locally or on any cloud VPS (Render, Fly.io, Hugging Face Spaces):
 
 ```bash
 # Build Docker image
