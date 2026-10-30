@@ -101,9 +101,9 @@ flowchart TD
     end
 
     subgraph Deployment["4. Inference & Interactive Interfaces"]
-        O --> P["Chiller Digital Twin Webapp<br/>(webapp/server.py - Physical Fault Injection)"]
-        O --> Q["Live Cloud Deployment on Render<br/>(24/7 Managed Web Service)"]
-        O --> R["Production Docker Container<br/>(FastAPI / Uvicorn Port 7860)"]
+        O --> P["Chiller Digital Twin Engine<br/>(FastAPI Backend: webapp/server.py)"]
+        P --> Q["Live Cloud Demo on Render<br/>(24/7 Managed Web Service)"]
+        P --> R["Production Docker / Local Uvicorn<br/>(Port 7860)"]
     end
 ```
 
@@ -188,7 +188,7 @@ Windows (B, C=19, T=128) → 2D Image Adapter → DINOv3 ViT → 1x1 Conv Projec
                          → Temporal Contrasting (TC) reads features
 ```
 
-$N = (\text{img\_size} / \text{patch\_size})^2$. For the default $224 \times 224$ image with $16 \times 16$ patch tokens, $N = (224 / 16)^2 = 196$.
+`N = (img_size / patch_size)²`. The default `224 / 16` grid is 14×14, so `N = 196`. CNN length 18 is the temporal size after three conv/pool blocks on `T = 128`.
 
 | Component | 1D-CNN (`base_Model`) | DINOv3 ViT (`Dinov3Encoder`) |
 | :--- | :--- | :--- |
@@ -197,8 +197,8 @@ $N = (\text{img\_size} / \text{patch\_size})^2$. For the default $224 \times 224
 | **Projection Layer** | None (3rd conv block outputs 128 channels) | Trainable `Conv1d(384, 128, 1)` + `BatchNorm1d` + `GELU` |
 | **Classification Head** | `Linear(18 * 128, 8)` | Same contract: `Linear(N * 128, 8)` |
 | **Temporal Contrasting (TC)** | Original module, trainable | Same module, trainable |
-| **Loss Formulations** | Standard TS-TCC / CA-TCC losses | Adapted temperature (0.07) + Masked Feature Reconstruction ($L_{recon}$) |
-| **Feature Contract** | `(B, 128, 18)` where $18 > \text{TC.timesteps}$ | `(B, 128, N)` where $N > \text{TC.timesteps}$ |
+| **Loss Formulations** | Standard TS-TCC / CA-TCC losses | Adapted temperature (0.07) + Masked Feature Reconstruction ($L_{\text{recon}}$) |
+| **Feature Contract** | `(B, 128, 18)` where `18 > TC.timesteps` | `(B, 128, N)` where `N > TC.timesteps` |
 
 Freezing ensures that DINOv3 weights are never corrupted by small-batch telemetry noise. `build_encoder` calls `freeze_backbone()`. Even when `Trainer` sets `model.train()`, the ViT backbone remains pinned in `eval()` mode so that DropPath does not randomly perturb features.
 
@@ -239,13 +239,13 @@ The default backbone is Meta’s [`facebook/dinov3-vits16-pretrain-lvd1689m`](ht
 | [`src/chiller_fault_detection/models/loss.py`](src/chiller_fault_detection/models/loss.py) | Added `MaskedReconstructionLoss`, L2 normalization in `SupConLoss` | Adds feature-level reconstruction loss for masked patches; normalizes features on unit hypersphere. |
 | [`src/chiller_fault_detection/models/trainer.py`](src/chiller_fault_detection/models/trainer.py) | Configured `Dinov3Config`, patch-level loss weighting, temperature adaptation | Balances TC loss against reconstruction; tunes contrastive temperature to 0.07 for small batches. |
 | [`src/chiller_fault_detection/models/augmentations.py`](src/chiller_fault_detection/models/augmentations.py) | Branching for `encoder == "dinov3"` | Replaces 1D raw-stride permutation with 2D patch masking to avoid spatial distortion. |
-| [`scripts/train.py`](scripts/train.py) | Added `--encoder`, `--dinov3-variant`, `--img-size`, adaptive batch size | Exposes the encoder switch seamlessly via CLI flags. |
+| [`scripts/train.py`](scripts/train.py) | CLI flags: `--encoder`, `--dinov3-variant`, `--img-size`, `--batch-size` | Exposes encoder options seamlessly via CLI flags. |
 | [`pyproject.toml`](pyproject.toml) | Added `transformers>=4.56` | Enables reading Hugging Face ViT model checkpoints via `AutoModel`. |
 
 ### 4.6. Status & Limitations
 - **Adapter Topology**: Rasterizing 19 physical channels into a 2D image plane treats sensor adjacency as spatial proximity; bilinear resizing interpolates between dissimilar physical units.
-- **Minimum Grid Constraints**: Images must satisfy $\text{img\_size} \ge 64$ and be multiples of 16 so that patch token count $N > \text{TC.timesteps}$ (default 6).
-- **GPU Memory**: Batch size 128 with a $224 \times 224$ ViT will cause CUDA OOM. The CLI defaults DINOv3 to batch size 16.
+- **Minimum Grid Constraints**: Images must satisfy `img_size >= 64` and be positive multiples of 16 so that patch token count `N > TC.timesteps` (default 6). With patch size 16, the smallest usable image is 64 (`N = 16`).
+- **GPU Memory**: Batch size 128 with a 224×224 ViT will cause CUDA OOM. The CLI defaults DINOv3 to batch size 16.
 
 ---
 
@@ -522,12 +522,12 @@ Verify container health: `curl http://localhost:7860/healthz` (Returns HTTP 200 
 
 | Error Message / Symptom | Root Cause | Solution |
 | :--- | :--- | :--- |
-| `FileNotFoundError: CNN residualizer/scaler missing` | The preprocessing bundle in `demo/models/` has not been generated. | Run `uv run python scripts/fit_cnn_demo_preprocess.py`. This rebuilds `scaler.joblib` and `residualizer.joblib` from baseline data. |
-| `RuntimeError: Could not load DINOv3 weights` | Meta’s DINOv3 repository on Hugging Face is gated and requires user license acceptance. | 1. Log in to [Hugging Face](https://huggingface.co/).<br/>2. Visit [facebook/dinov3-vits16-pretrain-lvd1689m](https://huggingface.co/facebook/dinov3-vits16-pretrain-lvd1689m) and click **"Agree and access repository"**.<br/>3. Execute `uv run huggingface-cli login` in your terminal and provide your access token. |
-| `torch.cuda.OutOfMemoryError: CUDA out of memory` | DINOv3 ViT with default $224 \times 224$ images exceeds available GPU VRAM. | 1. Reduce image size and batch size: add `--img-size 64 --batch-size 8`.<br/>2. Alternatively, force CPU execution: `--device cpu`. |
-| `ValueError: Need at least 128 rows after processing` | Uploaded CSV has fewer than 128 timestamps after filtering. | Telemetry files must contain at least 128 consecutive valid readings ($\approx 21\text{ minutes}$ at $10\text{s}$ sampling) to construct a full temporal window. |
+| `FileNotFoundError: CNN residualizer/scaler missing` | Preprocessing bundle in `demo/models/` has not been generated. | Run `uv run python scripts/fit_cnn_demo_preprocess.py`. |
+| `RuntimeError: Could not load DINOv3 weights` | Meta’s DINOv3 repo on Hugging Face is gated and requires license acceptance. | 1. Accept license on [facebook/dinov3-vits16-pretrain-lvd1689m](https://huggingface.co/facebook/dinov3-vits16-pretrain-lvd1689m).<br/>2. Run `uv run huggingface-cli login`. |
+| `torch.cuda.OutOfMemoryError: CUDA out of memory` | DINOv3 ViT with 224×224 images exceeds GPU memory. | 1. Add `--img-size 64 --batch-size 8`.<br/>2. Or switch to CPU: `--device cpu`. |
+| `ValueError: Need at least 128 rows after processing` | Telemetry series has fewer than 128 valid timestamps after load filtering. | Telemetry files must contain at least 128 consecutive readings (~21 minutes at 10s intervals). |
 | `ModuleNotFoundError: No module named 'transformers'` | Dependencies out of sync with project specification. | Run `uv sync --extra demo` to install all declared dependencies. |
-| `ValueError: img_size must be a positive multiple of patch_size 16` | `--img-size` is invalid or token count is insufficient. | Provide an `--img-size` that is a multiple of 16 (e.g., 64, 128, 224). Do not use 32 because $N = (32/16)^2 = 4 \le \text{TC.timesteps} = 6$. |
+| `ValueError: img_size must be a positive multiple of patch_size 16` | `--img-size` is invalid or token count is insufficient. | Provide an `--img-size` that is a positive multiple of 16 (e.g. 64, 128, 224). Do not use 32 because `N = (32/16)² = 4 <= TC.timesteps (6)`. |
 
 ---
 
