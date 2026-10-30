@@ -49,7 +49,7 @@ def main() -> None:
         default="cnn",
         help="cnn = TS-TCC conv; dinov3 = pretrained DINOv3 ViT",
     )
-    parser.add_argument("--label-fraction", type=float, default=0.01)
+    parser.add_argument("--label-fraction", type=float, default=0.05)
     parser.add_argument(
         "--finetune-encoder",
         action="store_true",
