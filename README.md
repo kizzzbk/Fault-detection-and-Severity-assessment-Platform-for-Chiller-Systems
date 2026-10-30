@@ -205,24 +205,37 @@ Windows (B, C=19, T=128) → 2D Image Adapter → DINOv3 ViT → 1x1 Conv Projec
 | **Classification Head** | `Linear(18 * 128, 8)` | Same contract: `Linear(N * 128, 8)` |
 | **Temporal Contrasting (TC)** | Original module, trainable | Same module, trainable |
 | **Loss Formulations** | Standard TS-TCC / CA-TCC losses | Adapted temperature (0.07) + Masked Feature Reconstruction ($L_{\text{recon}}$) |
-| **Feature Contract** | `(B, 128, 18)` where `18 > TC.timesteps` | `(B, 128, N)` where `N > TC.timesteps` |
+| **Feature Contract** | `(B, 128, 18)` (Length $18 > \text{timesteps}$) | `(B, 128, N)` ($N > \text{timesteps}$) |
 
 Freezing ensures that DINOv3 weights are never corrupted by small-batch telemetry noise. `build_encoder` calls `freeze_backbone()`. Even when `Trainer` sets `model.train()`, the ViT backbone remains pinned in `eval()` mode so that DropPath does not randomly perturb features.
 
 ### 4.2. Input Adaptation (Sensor Window to 2D Image Plane)
 DINOv3 expects an ImageNet-normalized 3-channel RGB image. The telemetry window is transformed in `Dinov3Encoder._windows_to_images` via a 7-step deterministic procedure:
 
-1. **Independent Window Min-Max Scaling**: Scale each window independently to $[0, 1]$:
+- **Step 1: Independent Window Min-Max Scaling**  
+  Scale each window independently to $[0, 1]$:
 
-$$
-\tilde{X} = \frac{X - \min(X)}{\max(X) - \min(X) + \epsilon}
-$$
-2. **Channel-as-Height, Time-as-Width**: Treat sensor channels as image height and time as image width, yielding shape `(B, 1, C=19, T=128)`.
-3. **Bilinear Interpolation**: Interpolate bilinearly to a square grid `(img_size, img_size)` (default $224 \times 224$).
-4. **Channel Duplication**: Replicate the single grayscale plane across 3 RGB channels `(B, 3, 224, 224)`.
-5. **ImageNet Normalization**: Subtract mean `(0.485, 0.456, 0.406)` and divide by standard deviation `(0.229, 0.224, 0.225)`.
-6. **ViT Patch Extraction**: Forward pass through DINOv3. Discard the CLS token and register tokens; extract the $N = 196$ patch tokens of width 384 (for `vits16`).
-7. **Projection & Logits**: Project hidden width $384 \to 128$ via $1 \times 1$ convolution. Flatten into `(B, 8)` for the logits head.
+  $$
+  \tilde{X} = \frac{X - \min(X)}{\max(X) - \min(X) + \epsilon}
+  $$
+
+- **Step 2: Channel-as-Height, Time-as-Width**  
+  Treat sensor channels as image height and time as image width, yielding shape `(B, 1, C=19, T=128)`.
+
+- **Step 3: Bilinear Interpolation**  
+  Interpolate bilinearly to a square grid `(img_size, img_size)` (default $224 \times 224$).
+
+- **Step 4: Channel Duplication**  
+  Replicate the single grayscale plane across 3 RGB channels `(B, 3, 224, 224)`.
+
+- **Step 5: ImageNet Normalization**  
+  Subtract ImageNet mean `(0.485, 0.456, 0.406)` and divide by standard deviation `(0.229, 0.224, 0.225)`.
+
+- **Step 6: ViT Patch Extraction**  
+  Forward pass through DINOv3. Discard the CLS token and register tokens; extract the $N = 196$ patch tokens of width 384 (for `vits16`).
+
+- **Step 7: Projection & Logits**  
+  Project hidden width $384 \to 128$ via $1 \times 1$ convolution. Flatten into `(B, 8)` for the logits head.
 
 ### 4.3. Strong-View 2D Patch Masking vs 1D Permutation
 - **Weak View (Both Encoders)**: Mild Gaussian jitter followed by scaling.
@@ -243,13 +256,13 @@ The default backbone is Meta’s [`facebook/dinov3-vits16-pretrain-lvd1689m`](ht
 
 ### 4.5. Code Changes & Design Rationale
 
-| File Path | Modifications Made | Design Rationale |
+| File | Modifications Made | Design Rationale |
 | :--- | :--- | :--- |
-| [`src/chiller_fault_detection/models/dinov3.py`](src/chiller_fault_detection/models/dinov3.py) | Implemented `Dinov3Encoder`, `_windows_to_images`, `load_dinov3_backbone`, `apply_patch_mask` | Encapsulates ViT backbone, 2D rasterization, channel projection, and 2D patch-level masking. |
-| [`src/chiller_fault_detection/models/loss.py`](src/chiller_fault_detection/models/loss.py) | Added `MaskedReconstructionLoss`, L2 normalization in `SupConLoss` | Adds feature-level reconstruction loss for masked patches; normalizes features on unit hypersphere. |
-| [`src/chiller_fault_detection/models/trainer.py`](src/chiller_fault_detection/models/trainer.py) | Configured `Dinov3Config`, patch-level loss weighting, temperature adaptation | Balances TC loss against reconstruction; tunes contrastive temperature to 0.07 for small batches. |
-| [`src/chiller_fault_detection/models/augmentations.py`](src/chiller_fault_detection/models/augmentations.py) | Branching for `encoder == "dinov3"` | Replaces 1D raw-stride permutation with 2D patch masking to avoid spatial distortion. |
-| [`scripts/train.py`](scripts/train.py) | CLI flags: `--encoder`, `--dinov3-variant`, `--img-size`, `--batch-size` | Exposes encoder options seamlessly via CLI flags. |
+| [`models/dinov3.py`](src/chiller_fault_detection/models/dinov3.py) | `Dinov3Encoder`, 2D image adapter, ViT loader, patch masking | Encapsulates ViT backbone, 2D rasterization, channel projection, and patch masking. |
+| [`models/loss.py`](src/chiller_fault_detection/models/loss.py) | `MaskedReconstructionLoss`, L2 normalization in `SupConLoss` | Bidirectional feature reconstruction on masked patches; unit hypersphere projection. |
+| [`models/trainer.py`](src/chiller_fault_detection/models/trainer.py) | `Dinov3Config`, loss weighting, temperature adaptation | Integrates `L_recon`, scales TC weight to 0.1, adapts temperature (0.07) for batch size 16. |
+| [`models/augmentations.py`](src/chiller_fault_detection/models/augmentations.py) | Branching for `encoder == "dinov3"` | Delegates masking to 2D image plane to prevent 1D coordinate distortion. |
+| [`scripts/train.py`](scripts/train.py) | CLI flags: `--encoder`, `--dinov3-variant`, `--img-size` | Exposes encoder switch without requiring a second entrypoint. |
 | [`pyproject.toml`](pyproject.toml) | Added `transformers>=4.56` | Enables reading Hugging Face ViT model checkpoints via `AutoModel`. |
 
 ### 4.6. Status & Limitations
