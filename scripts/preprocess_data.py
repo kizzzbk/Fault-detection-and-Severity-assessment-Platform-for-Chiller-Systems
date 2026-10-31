@@ -2,12 +2,14 @@
 import argparse
 import json
 from pathlib import Path
+
 from chiller_fault_detection.config import (
     TEST_RATIO,
     TRAIN_RATIO,
     VAL_RATIO,
 )
 from chiller_fault_detection.data.preprocess import run_preprocess
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)

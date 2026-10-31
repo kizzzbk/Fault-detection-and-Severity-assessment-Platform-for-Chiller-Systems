@@ -1,10 +1,11 @@
-import torch
 import numpy as np
+import torch
+
 
 class NTXentLoss(torch.nn.Module):
 
     def __init__(self, device, batch_size, temperature, use_cosine_similarity):
-        super(NTXentLoss, self).__init__()
+        super().__init__()
         self.batch_size = batch_size
         self.temperature = temperature
         self.device = device
@@ -24,7 +25,7 @@ class NTXentLoss(torch.nn.Module):
         diag = np.eye(2 * self.batch_size)
         l1 = np.eye((2 * self.batch_size), 2 * self.batch_size, k=-self.batch_size)
         l2 = np.eye((2 * self.batch_size), 2 * self.batch_size, k=self.batch_size)
-        mask = torch.from_numpy((diag + l1 + l2))
+        mask = torch.from_numpy(diag + l1 + l2)
         mask = (1 - mask).type(torch.bool)
         return mask.to(self.device)
 
@@ -80,6 +81,7 @@ class SupConLoss(torch.nn.Module):
         mask = torch.eq(labels, labels.T).float().to(self.device)
 
         contrast = torch.cat(torch.unbind(features, dim=1), dim=0)
+        contrast = torch.nn.functional.normalize(contrast, p=2, dim=1)
         anchor_dot = torch.matmul(contrast, contrast.T) / self.temperature
         logits = anchor_dot - anchor_dot.max(dim=1, keepdim=True).values.detach()
 
@@ -93,3 +95,33 @@ class SupConLoss(torch.nn.Module):
         mean_log_prob_pos = (mask * log_prob).sum(1) / mask.sum(1).clamp_min(1)
         loss = -self.temperature * mean_log_prob_pos
         return loss.view(features.shape[1], batch_size).mean()
+
+
+class MaskedReconstructionLoss(torch.nn.Module):
+    """Mean squared error reconstruction loss on masked patch tokens for ViT."""
+
+    def __init__(self):
+        super().__init__()
+        self.criterion = torch.nn.MSELoss()
+
+    def forward(
+        self,
+        features_pred: torch.Tensor,
+        features_target: torch.Tensor,
+        mask: torch.Tensor | None,
+    ) -> torch.Tensor:
+        """Calculate MSE between predicted and target patch tokens at masked positions.
+
+        Args:
+            features_pred: (B, C, N) features from masked view.
+            features_target: (B, C, N) features from unmasked view.
+            mask: (B, N) boolean tensor where True indicates masked patches.
+        """
+        if mask is None or not mask.any():
+            return torch.tensor(0.0, device=features_pred.device, requires_grad=True)
+
+        # Transpose (B, C, N) -> (B, N, C) to align with mask (B, N)
+        pred_tokens = features_pred.transpose(1, 2)[mask]
+        target_tokens = features_target.transpose(1, 2)[mask].detach()
+        return self.criterion(pred_tokens, target_tokens)
+

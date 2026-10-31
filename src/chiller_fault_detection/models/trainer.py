@@ -6,25 +6,33 @@ import logging
 from dataclasses import dataclass
 from pathlib import Path
 
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-import matplotlib.pyplot as plt
 import seaborn as sns
-from sklearn.metrics import accuracy_score, classification_report, confusion_matrix, f1_score
+import torch
+import torch.nn.functional as F
+from sklearn.metrics import (
+    accuracy_score,
+    classification_report,
+    confusion_matrix,
+    f1_score,
+)
+from torch import nn
 from torch.utils.data import DataLoader, Dataset
 
 from chiller_fault_detection.config import RANDOM_SEED, SPLITS_DIR
 from chiller_fault_detection.data.load import MODEL_FEATURE_COLUMNS
 from chiller_fault_detection.labels import ID_TO_LABEL
-from chiller_fault_detection.models.TC import TC
 from chiller_fault_detection.models.augmentations import DataTransform
-from chiller_fault_detection.models.loss import NTXentLoss, SupConLoss
 from chiller_fault_detection.models.dinov3 import Dinov3Encoder, n_dino_tokens
+from chiller_fault_detection.models.loss import (
+    MaskedReconstructionLoss,
+    NTXentLoss,
+    SupConLoss,
+)
 from chiller_fault_detection.models.model import base_Model
-from chiller_fault_detection.models.patchtst import PatchTSTEncoder, n_patches
+from chiller_fault_detection.models.TC import TC
 
 LOGGER = logging.getLogger("ts_tcc")
 
@@ -33,13 +41,11 @@ LOGGER = logging.getLogger("ts_tcc")
 class AugmentConfig:
     # Weak view jitters then scales; CNN strong view permutes then jitters.
     # Scale/jitter match the HAR config in the TS-TCC repo (sigma 1.1 and 0.8).
-    # PatchTST and DINOv3 strong views use milder jitter + masking, not permute.
+    # DINOv3 strong view uses milder jitter + masking, not permute.
     weak_jitter_ratio: float = 0.05
     jitter_scale_ratio: float = 1.1
     jitter_ratio: float = 0.8
     max_seg: int = 8
-    patchtst_jitter_ratio: float = 0.2
-    patchtst_mask_ratio: float = 0.4
     dinov3_jitter_ratio: float = 0.2
     dinov3_mask_ratio: float = 0.4
 
@@ -54,25 +60,6 @@ class ContextConfig:
 class TemporalConfig:
     hidden_dim: int = 100
     timesteps: int = 6
-
-
-@dataclass
-class PatchTSTConfig:
-    """Used only when ``TrainConfig.encoder == 'patchtst'``. CNN ignores these.
-
-    Defaults track Tsinghua PatchTST more closely than the first drop-in
-    encoder: smaller patches (more tokens on window=128), d_model=128,
-    3 layers. ``head_dropout`` is the Tsinghua classification-head dropout.
-    """
-
-    patch_len: int = 8
-    patch_stride: int = 4
-    d_model: int = 128
-    n_layers: int = 3
-    n_heads: int = 8
-    d_ff: int = 256
-    dropout: float = 0.2
-    head_dropout: float = 0.2
 
 
 @dataclass
@@ -108,7 +95,6 @@ class TrainConfig:
     augmentation: AugmentConfig = None
     Context_Cont: ContextConfig = None
     TC: TemporalConfig = None
-    patchtst: PatchTSTConfig = None
     dinov3: Dinov3Config = None
 
     def __post_init__(self) -> None:
@@ -118,22 +104,14 @@ class TrainConfig:
             self.Context_Cont = ContextConfig()
         if self.TC is None:
             self.TC = TemporalConfig()
-        if self.patchtst is None:
-            self.patchtst = PatchTSTConfig()
         if self.dinov3 is None:
             self.dinov3 = Dinov3Config()
         if self.encoder == "cnn":
             self.features_len = encoder_length(self.window, self.kernel_size, self.stride)
-        elif self.encoder == "patchtst":
-            self.features_len = n_patches(
-                self.window, self.patchtst.patch_len, self.patchtst.patch_stride
-            )
         elif self.encoder == "dinov3":
             self.features_len = n_dino_tokens(self.dinov3.img_size, self.dinov3.patch_size)
         else:
-            raise ValueError(
-                f"Unknown encoder {self.encoder!r}; use 'cnn', 'patchtst', or 'dinov3'"
-            )
+            raise ValueError(f"Unknown encoder {self.encoder!r}; use 'cnn' or 'dinov3'")
         if self.features_len <= self.TC.timesteps:
             raise ValueError(
                 f"Encoder length {self.features_len} must exceed TC timesteps {self.TC.timesteps}"
@@ -141,11 +119,9 @@ class TrainConfig:
 
 
 def build_encoder(config: TrainConfig) -> nn.Module:
-    """CNN, PatchTST, or DINOv3. Each returns ``(logits, features)``."""
+    """CNN or DINOv3. Each returns ``(logits, features)``."""
     if config.encoder == "cnn":
         return base_Model(config)
-    if config.encoder == "patchtst":
-        return PatchTSTEncoder(config)
     if config.encoder == "dinov3":
         model = Dinov3Encoder(config)
         if config.finetune_encoder:
@@ -288,7 +264,7 @@ def stratified_indices(y: np.ndarray, fraction: float, seed: int) -> np.ndarray:
     chosen = []
     for label in np.unique(y):
         idx = np.flatnonzero(y == label)
-        n_take = min(len(idx), max(1, int(round(len(idx) * fraction))))
+        n_take = min(len(idx), max(1, round(len(idx) * fraction)))
         chosen.append(rng.choice(idx, size=n_take, replace=False))
     return np.sort(np.concatenate(chosen))
 
@@ -372,19 +348,39 @@ def model_train(
         temp_cont_optimizer.zero_grad()
 
         if training_mode == "self_supervised":
-            _, features1 = model(aug1)
-            _, features2 = model(aug2)
+            if config.encoder == "dinov3":
+                _, features1 = model(aug1)
+                # Apply 16x16 patch masking directly on the 2D image plane for aug2
+                _, features2, patch_mask = model(
+                    aug2, mask_ratio=config.augmentation.dinov3_mask_ratio
+                )
+                recon_loss = MaskedReconstructionLoss()(features2, features1, patch_mask)
+            else:
+                _, features1 = model(aug1)
+                _, features2 = model(aug2)
+                recon_loss = 0.0
+
             features1 = F.normalize(features1, dim=1)
             features2 = F.normalize(features2, dim=1)
             temp_cont_loss1, zis = temporal_contr_model(features1, features2)
             temp_cont_loss2, zjs = temporal_contr_model(features2, features1)
+            temp_temperature = (
+                0.07 if config.encoder == "dinov3" else config.Context_Cont.temperature
+            )
             nt_xent = NTXentLoss(
                 device,
                 config.batch_size,
-                config.Context_Cont.temperature,
+                temp_temperature,
                 config.Context_Cont.use_cosine_similarity,
             )
-            loss = (temp_cont_loss1 + temp_cont_loss2) + 0.7 * nt_xent(zis, zjs)
+            if config.encoder == "dinov3":
+                loss = (
+                    0.1 * (temp_cont_loss1 + temp_cont_loss2)
+                    + 0.7 * nt_xent(zis, zjs)
+                    + 1.0 * recon_loss
+                )
+            else:
+                loss = (temp_cont_loss1 + temp_cont_loss2) + 0.7 * nt_xent(zis, zjs)
         elif training_mode == "SupCon":
             _, features1 = model(aug1)
             _, features2 = model(aug2)
@@ -393,9 +389,13 @@ def model_train(
             temp_cont_loss1, feat1 = temporal_contr_model(features1, features2)
             temp_cont_loss2, feat2 = temporal_contr_model(features2, features1)
             sup_features = torch.cat([feat1.unsqueeze(1), feat2.unsqueeze(1)], dim=1)
-            loss = 0.01 * (temp_cont_loss1 + temp_cont_loss2) + 0.1 * SupConLoss(device)(
-                sup_features, labels
-            )
+            sup_temp = 0.07 if config.encoder == "dinov3" else 0.2
+            if config.encoder == "dinov3":
+                loss = SupConLoss(device, temperature=sup_temp)(sup_features, labels)
+            else:
+                loss = 0.01 * (temp_cont_loss1 + temp_cont_loss2) + 0.1 * SupConLoss(
+                    device, temperature=sup_temp
+                )(sup_features, labels)
         else:
             predictions, _ = model(data)
             loss = criterion(predictions, labels)
@@ -451,13 +451,11 @@ def model_evaluate(model, temporal_contr_model, test_dl, device, training_mode):
 
 
 def _encoder_lr(config: TrainConfig) -> float:
-    """PatchTST caps at 1e-4. A trainable DINOv3 ViT caps at 1e-5.
+    """A trainable DINOv3 ViT caps at 1e-5.
 
     A frozen DINOv3 backbone leaves the projection and the head on ``config.lr``
     (3e-4). The same rate is also used for the temporal-contrasting module.
     """
-    if config.encoder == "patchtst":
-        return min(config.lr, 1e-4)
     if config.encoder == "dinov3" and config.finetune_encoder:
         return min(config.lr, 1e-5)
     return config.lr
@@ -486,12 +484,12 @@ def _freeze_encoder(model) -> None:
 
 
 def _maybe_freeze_for_linear(model, config: TrainConfig) -> None:
-    """Linear probe for CNN and DINOv3. PatchTST, or ``finetune_encoder``, trains the full net.
+    """Linear probe for CNN and DINOv3. ``finetune_encoder`` trains the full net.
 
     DINOv3's ViT is already frozen in ``build_encoder``. This second freeze
     also stops the feature projection, so the last stage updates only ``logits``.
     """
-    if config.encoder == "patchtst" or config.finetune_encoder:
+    if config.finetune_encoder:
         LOGGER.info("Supervised fine-tune of full %s encoder + head", config.encoder)
         return
     _freeze_encoder(model)
@@ -509,17 +507,9 @@ def _experiment_header(config: TrainConfig, method: str, extra: str = "") -> str
         f"window={config.window}",
         f"features_len={config.features_len}",
         f"final_out_channels={config.final_out_channels}",
-        f"finetune_encoder={config.finetune_encoder or config.encoder == 'patchtst'}",
+        f"finetune_encoder={config.finetune_encoder}",
     ]
-    if config.encoder == "patchtst":
-        pt = config.patchtst
-        lines.append(
-            "patchtst "
-            f"patch_len={pt.patch_len} patch_stride={pt.patch_stride} "
-            f"d_model={pt.d_model} n_layers={pt.n_layers} n_heads={pt.n_heads} "
-            f"d_ff={pt.d_ff} lr={_encoder_lr(config):.1e} freeze_encoder=False"
-        )
-    elif config.encoder == "dinov3":
+    if config.encoder == "dinov3":
         d3 = config.dinov3
         lines.append(
             "dinov3 "
@@ -715,7 +705,7 @@ def run_ca_tcc(config: TrainConfig, out_dir: Path, device: torch.device, label_f
     Trainer(model, temporal, model_opt, temporal_opt, train_dl, valid_dl, device, config, "SupCon", config.num_epoch)
     torch.save({"model_state_dict": model.state_dict()}, out_dir / "ckp_supcon.pt")
 
-    #CA-TCC Stage 5: CNN and DINOv3 freeze down to the head; PatchTST fine-tunes the full net
+    # CA-TCC stage 5: CNN and DINOv3 freeze down to the head unless --finetune-encoder
     _maybe_freeze_for_linear(model, config)
     train_dl, valid_dl, test_dl = make_loaders(
         splits, config, "train_linear", train_xy=few_xy, batch_size=16

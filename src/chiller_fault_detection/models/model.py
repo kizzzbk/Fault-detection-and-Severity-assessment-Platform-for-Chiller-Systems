@@ -1,15 +1,15 @@
 """Original TS-TCC CNN encoder.
 
-Keep this file as the conv ``base_Model``. PatchTST is ``patchtst.PatchTSTEncoder``.
-DINOv3 is ``dinov3.Dinov3Encoder``. All three expose
-``forward(x) -> (logits, features)``; switch them with ``--encoder``.
+Keep this file as the conv ``base_Model``. DINOv3 is ``dinov3.Dinov3Encoder``.
+Both expose ``forward(x) -> (logits, features)``; switch them with ``--encoder``.
 """
 
 from torch import nn
 
+
 class base_Model(nn.Module):
     def __init__(self, configs):
-        super(base_Model, self).__init__()
+        super().__init__()
 
         self.conv_block1 = nn.Sequential(
             nn.Conv1d(configs.input_channels, 32, kernel_size=configs.kernel_size,

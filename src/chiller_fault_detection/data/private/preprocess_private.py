@@ -9,7 +9,7 @@ Steps in this module
 5. ``UnitConverter`` — °C→°F for absolute and difference temperatures,
    kPa→psi for pressures, on the raw Laguna columns.
 6. ``SchemaMapper`` — map columns, derive values, drop empty and trailing
-   rows, stamp ``time`` and ``source_file``.
+   rows, stamp ``time``, ``source_file``, and the normal-operation labels.
 7. ``PrivatePreprocessor`` — run the steps above and write parquet.
 """
 
@@ -22,7 +22,8 @@ import numpy as np
 import pandas as pd
 
 from chiller_fault_detection.config import PROCESSED_DIR, SHEET_NAME
-from chiller_fault_detection.data.load import FEATURE_COLUMNS
+from chiller_fault_detection.data.public.load import FEATURE_COLUMNS
+from chiller_fault_detection.labels import FaultType, SourceLabel
 
 DEFAULT_SOURCE = Path("/home/phananh/Downloads/LAGUNA CH01 892026.xls")
 DEFAULT_SCHEMA = PROCESSED_DIR / "dataset.parquet"
@@ -31,6 +32,7 @@ DEFAULT_OUT = PROCESSED_DIR / "laguna_processed.parquet"
 SOURCE_FILE_VALUE = "laguna.xls"
 TIME_STEP_SECONDS = 10.0
 TRAILING_ROWS_TO_DROP = 3
+NORMAL_LABEL = SourceLabel(FaultType.NORMAL, 0)
 
 C_TO_F_SCALE = 1.8
 C_TO_F_OFFSET = 32.0
@@ -275,6 +277,11 @@ class SchemaMapper:
 
         source_col = SchemaReader.find(schema_columns, "source_file")
         out[source_col] = self.source_file_value
+
+        out[SchemaReader.find(schema_columns, "fault")] = NORMAL_LABEL.fault.value
+        out[SchemaReader.find(schema_columns, "fault_id")] = NORMAL_LABEL.fault_id
+        out[SchemaReader.find(schema_columns, "severity_level")] = NORMAL_LABEL.severity_level
+        out[SchemaReader.find(schema_columns, "path_label")] = NORMAL_LABEL.path_label
         return out.loc[:, schema_columns]
 
     def _map_columns(

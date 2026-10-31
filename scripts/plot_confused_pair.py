@@ -25,7 +25,7 @@ from sklearn.decomposition import PCA
 
 from chiller_fault_detection.config import PROCESSED_DIR, SCALER_PATH
 from chiller_fault_detection.data.load import MODEL_FEATURE_COLUMNS
-from chiller_fault_detection.labels import FaultType, LABEL_TO_ID
+from chiller_fault_detection.labels import LABEL_TO_ID, FaultType
 from chiller_fault_detection.models.trainer import TrainConfig, load_window_splits
 
 

@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Chiller Twin · Edge-AI Fault Diagnosis</title>
+  <meta name="description" content="Interactive chiller digital twin: inject the 7 ASHRAE RP-1043 faults, run the machine, and watch the CA-TCC CNN diagnose them." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <svg viewBox="0 0 32 32" class="brand-mark" aria-hidden="true">
+        <circle cx="16" cy="16" r="13" fill="none" stroke="currentColor" stroke-width="2" />
+        <g class="brand-rotor"><path d="M16 5v22M5 16h22M8.2 8.2l15.6 15.6M23.8 8.2 8.2 23.8" stroke="currentColor" stroke-width="1.6" /></g>
+        <circle cx="16" cy="16" r="3.5" fill="currentColor" />
+      </svg>
+      <div class="brand-title-wrap">
+        <div class="brand-name">CHILLER<span>//</span>TWIN</div>
+        <span class="pill" id="machine-pill"><i></i><span>IDLE</span></span>
+      </div>
+    </div>
+    <nav class="steps" aria-label="Workflow">
+      <button class="step active" id="step-1" data-screen="sim"><b>01</b> Inject &amp; Run</button>
+      <span class="step-line"></span>
+      <button class="step" id="step-2" data-screen="report" disabled><b>02</b> Diagnosis</button>
+    </nav>
+    <div class="status">
+      <span class="clock mono" id="clock">--:--:--</span>
+    </div>
+  </header>
+
+  <main>
+    <!-- ============ SCREEN 1 ============ -->
+    <section class="screen active" id="screen-sim">
+      <h1 class="sr-only">Chiller digital twin – fault injection</h1>
+      <div class="sim-grid">
+        <div class="card stage-card">
+          <div class="card-head">
+            <div>
+              <div class="eyebrow">Digital twin</div>
+              <h2>Live machine</h2>
+            </div>
+            <div class="readouts mono" id="kpis">
+              <div><span>Load</span><b id="k-kw">–</b><em>kW</em></div>
+              <div><span>Lift</span><b id="k-lift">–</b><em>psi</em></div>
+              <div><span>Est. COP</span><b id="k-cop">–</b></div>
+            </div>
+          </div>
+
+          <div class="stage" id="stage">
+            <svg id="chiller" viewBox="0 0 1200 640" preserveAspectRatio="xMidYMid meet" aria-label="Animated centrifugal chiller"></svg>
+            <div class="probes" id="probes"></div>
+            <div class="run-overlay" id="run-overlay" hidden>
+              <div class="ro-ring"><svg viewBox="0 0 120 120"><circle cx="60" cy="60" r="52" class="ro-track"/><circle cx="60" cy="60" r="52" class="ro-fill" id="ro-fill"/></svg><div class="ro-pct mono" id="ro-pct">0%</div></div>
+            </div>
+          </div>
+
+          <div class="controls">
+            <div class="ctl-group">
+              <label class="ctl-label" for="hours">Run time</label>
+              <div class="seg" id="hours" role="radiogroup">
+                <button data-h="1">1h</button><button data-h="2" class="on">2h</button><button data-h="3">3h</button><button data-h="4">4h</button><button data-h="5">5h</button>
+              </div>
+            </div>
+            <button class="btn ghost" id="btn-reset" title="Return every slider to its nominal value">Reset</button>
+            <button class="btn primary" id="btn-run">
+              <svg viewBox="0 0 24 24"><path d="M7 4l13 8-13 8z" fill="currentColor"/></svg>
+              <span>Run chiller</span>
+            </button>
+          </div>
+        </div>
+
+        <aside class="side">
+          <div class="card guide" id="guide-card">
+            <div class="card-head"><div><div class="eyebrow">Playbook</div><h2>How to inject a fault</h2></div></div>
+            <ol class="guide-list" id="guide-list"></ol>
+          </div>
+
+          <div class="card telemetry" id="telemetry" hidden>
+            <div class="card-head">
+              <div><div class="eyebrow">Streaming to model</div><h2>Live telemetry</h2></div>
+              <div class="mono small" id="t-clock">00:00 / 00:00</div>
+            </div>
+            <canvas id="strip" height="150"></canvas>
+            <div class="legend mono small"><i style="--c:var(--warm)"></i>TCO <i style="--c:var(--amber)"></i>TCI <i style="--c:var(--ice)"></i>TEI <i style="--c:var(--cyan)"></i>TEO</div>
+            <div class="buffer">
+              <div class="buffer-head small"><span>Sliding window buffer</span><span class="mono" id="buf-n">0 / 128</span></div>
+              <div class="buffer-bar"><div id="buf-fill"></div></div>
+            </div>
+            <div class="infer-head small"><span>Window predictions</span></div>
+            <ul class="infer-log mono" id="infer-log"></ul>
+          </div>
+        </aside>
+      </div>
+    </section>
+
+    <!-- ============ SCREEN 2 ============ -->
+    <section class="screen" id="screen-report">
+      <h1 class="sr-only">Diagnosis report</h1>
+      <div class="verdict card" id="verdict"></div>
+      <div class="report-grid">
+        <div class="col-left">
+          <div class="kpi-row">
+            <div class="card kpi"><div class="eyebrow">Faults Detected</div><div class="kpi-v mono" id="r-count">0</div></div>
+            <div class="card kpi"><div class="eyebrow">Time with faults</div><div class="kpi-v mono" id="r-time">0</div></div>
+            <div class="card kpi health"><div class="eyebrow">Normal / Total Run Time</div><div class="kpi-v mono" id="r-health">0%</div><div class="hbar"><div id="r-health-bar"></div></div></div>
+          </div>
+          <div class="card breakdown">
+            <div class="card-head"><div><div class="eyebrow">Time share</div><h2>Fault breakdown</h2></div></div>
+            <div class="bd-body">
+              <svg id="donut" viewBox="0 0 220 220"></svg>
+              <ul class="bd-list" id="bd-list"></ul>
+            </div>
+          </div>
+          <div class="card data-card">
+            <div class="card-head">
+              <div><div class="eyebrow">Generated stream</div><h2>Sensor data</h2></div>
+              <button class="btn ghost sm" id="btn-dl"><svg viewBox="0 0 24 24"><path d="M12 3v12m0 0-5-5m5 5 5-5M4 20h16" fill="none" stroke="currentColor" stroke-width="2"/></svg>Download CSV</button>
+            </div>
+            <div class="table-wrap" id="table-wrap"><table id="data-table"></table></div>
+          </div>
+        </div>
+        <div class="col-right">
+          <div class="card timeline-card">
+            <div class="card-head">
+              <div><div class="eyebrow">Per-window predictions</div></div>
+              <div class="small muted mono" id="tl-meta"></div>
+            </div>
+            <svg id="timeline" viewBox="0 0 760 520"></svg>
+            <div class="tip mono" id="tip" hidden></div>
+          </div>
+          <div class="report-actions">
+            <button class="btn ghost" id="btn-back">← Adjust faults</button>
+            <button class="btn primary" id="btn-new">New simulation</button>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+  <div class="toast" id="toast" hidden></div>
+  <script src="/static/chiller.js"></script>
+  <script src="/static/app.js"></script>
+</body>
+</html>

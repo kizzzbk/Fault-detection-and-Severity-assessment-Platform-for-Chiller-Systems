@@ -1,7 +1,8 @@
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
 from einops import rearrange, repeat
+from torch import nn
+
 
 class Residual(nn.Module):
     def __init__(self, fn):
@@ -50,9 +51,9 @@ class Attention(nn.Module):
         )
 
     def forward(self, x, mask=None):
-        b, n, _, h = *x.shape, self.heads
+        _b, _n, _, h = *x.shape, self.heads
         qkv = self.to_qkv(x).chunk(3, dim=-1)
-        q, k, v = map(lambda t: rearrange(t, 'b n (h d) -> b h n d', h=h), qkv)
+        q, k, v = (rearrange(t, 'b n (h d) -> b h n d', h=h) for t in qkv)
 
         dots = torch.einsum('bhid,bhjd->bhij', q, k) * self.scale
 
@@ -100,7 +101,7 @@ class Seq_Transformer(nn.Module):
 
     def forward(self, forward_seq):
         x = self.patch_to_embedding(forward_seq)
-        b, n, _ = x.shape
+        b, _n, _ = x.shape
         c_tokens = repeat(self.c_token, '() n d -> b n d', b=b)
         x = torch.cat((c_tokens, x), dim=1)
         x = self.transformer(x)

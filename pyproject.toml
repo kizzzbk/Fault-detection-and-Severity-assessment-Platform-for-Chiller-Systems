@@ -8,11 +8,15 @@ authors = [
 ]
 requires-python = ">=3.13"
 dependencies = [
+    "coolprop>=8.0.0",
     "einops>=0.8.2",
+    "httpx>=0.28.1",
     "matplotlib>=3.11.2",
     "openpyxl>=3.1.5",
     "pandas>=3.0.6",
     "pyarrow>=21.0.0",
+    "pytest>=9.2.0",
+    "ruff>=0.17.3",
     "scikit-learn>=1.9.1",
     "seaborn>=0.13.2",
     "torch>=2.14.0",
@@ -31,3 +35,14 @@ build-backend = "uv_build"
 dev = [
     "ipykernel>=7.3.0",
 ]
+demo = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff.lint]
+select = ["E", "F"]
+ignore = ["E402", "F403", "E501"]
