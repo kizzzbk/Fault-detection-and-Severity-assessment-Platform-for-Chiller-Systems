@@ -6,24 +6,33 @@ import logging
 from dataclasses import dataclass
 from pathlib import Path
 
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-import matplotlib.pyplot as plt
 import seaborn as sns
-from sklearn.metrics import accuracy_score, classification_report, confusion_matrix, f1_score
+import torch
+import torch.nn.functional as F
+from sklearn.metrics import (
+    accuracy_score,
+    classification_report,
+    confusion_matrix,
+    f1_score,
+)
+from torch import nn
 from torch.utils.data import DataLoader, Dataset
 
 from chiller_fault_detection.config import RANDOM_SEED, SPLITS_DIR
 from chiller_fault_detection.data.load import MODEL_FEATURE_COLUMNS
 from chiller_fault_detection.labels import ID_TO_LABEL
-from chiller_fault_detection.models.TC import TC
 from chiller_fault_detection.models.augmentations import DataTransform
-from chiller_fault_detection.models.loss import MaskedReconstructionLoss, NTXentLoss, SupConLoss
 from chiller_fault_detection.models.dinov3 import Dinov3Encoder, n_dino_tokens
+from chiller_fault_detection.models.loss import (
+    MaskedReconstructionLoss,
+    NTXentLoss,
+    SupConLoss,
+)
 from chiller_fault_detection.models.model import base_Model
+from chiller_fault_detection.models.TC import TC
 
 LOGGER = logging.getLogger("ts_tcc")
 
@@ -255,7 +264,7 @@ def stratified_indices(y: np.ndarray, fraction: float, seed: int) -> np.ndarray:
     chosen = []
     for label in np.unique(y):
         idx = np.flatnonzero(y == label)
-        n_take = min(len(idx), max(1, int(round(len(idx) * fraction))))
+        n_take = min(len(idx), max(1, round(len(idx) * fraction)))
         chosen.append(rng.choice(idx, size=n_take, replace=False))
     return np.sort(np.concatenate(chosen))
 

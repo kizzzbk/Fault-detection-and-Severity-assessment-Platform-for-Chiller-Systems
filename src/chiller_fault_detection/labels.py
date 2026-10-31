@@ -13,7 +13,6 @@ import re
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Dict
 
 
 class FaultType(str, Enum):
@@ -27,7 +26,7 @@ class FaultType(str, Enum):
     EO = "eo"
 
 
-LABEL_TO_ID: Dict[FaultType, int] = {
+LABEL_TO_ID: dict[FaultType, int] = {
     FaultType.NORMAL: 0,
     FaultType.CF: 1,
     FaultType.FWE: 2,
@@ -38,13 +37,13 @@ LABEL_TO_ID: Dict[FaultType, int] = {
     FaultType.EO: 7,
 }
 
-ID_TO_LABEL: Dict[int, FaultType] = {v: k for k, v in LABEL_TO_ID.items()}
+ID_TO_LABEL: dict[int, FaultType] = {v: k for k, v in LABEL_TO_ID.items()}
 
 VALID_FAULT_IDS = frozenset(LABEL_TO_ID.values())
 VALID_SEVERITY_LEVELS = frozenset({0, 1, 2, 3, 4})
 
 # Percent in filename → SL1–SL4 (RP-1043 canonical levels).
-SEVERITY_PCT_TO_LEVEL: Dict[FaultType, Dict[int, int]] = {
+SEVERITY_PCT_TO_LEVEL: dict[FaultType, dict[int, int]] = {
     FaultType.CF: {6: 1, 12: 1, 20: 2, 30: 3, 45: 4},
     FaultType.FWE: {10: 1, 20: 2, 30: 3, 40: 4},
     FaultType.FWC: {10: 1, 20: 2, 30: 3, 40: 4},

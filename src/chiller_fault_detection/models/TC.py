@@ -1,12 +1,13 @@
-import torch
-import torch.nn as nn
 import numpy as np
+import torch
+from torch import nn
+
 from .attention import Seq_Transformer
 
 
 class TC(nn.Module):
     def __init__(self, configs, device):
-        super(TC, self).__init__()
+        super().__init__()
         self.num_channels = configs.final_out_channels
         self.timestep = configs.TC.timesteps
         self.Wk = nn.ModuleList([nn.Linear(configs.TC.hidden_dim, self.num_channels) for i in range(self.timestep)])

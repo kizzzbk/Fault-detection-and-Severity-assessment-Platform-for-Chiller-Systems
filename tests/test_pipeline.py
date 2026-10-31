@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 import pytest
-import torch
+
 from demo.cnn_schema import (
     CNN_FEATURE_COLUMNS,
     CNN_INPUT_CHANNELS,
@@ -14,6 +14,7 @@ from demo.pipeline import (
     load_bundle,
     predict_windows,
 )
+
 
 @pytest.fixture(scope="module")
 def bundle():

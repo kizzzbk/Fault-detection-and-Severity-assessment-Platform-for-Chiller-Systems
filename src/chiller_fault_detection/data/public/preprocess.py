@@ -20,7 +20,6 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
-
 import joblib
 import pandas as pd
 from sklearn.linear_model import LinearRegression
@@ -150,7 +149,7 @@ def time_splits(
         n_val = int(n * val_ratio)
         n_train = max(n_train, 1)
         n_val = max(n_val, 1)
-        n_test = n - n_train - n_val
+        n - n_train - n_val
 
         positions = list(idx)
         train_idx = positions[:n_train]
@@ -260,7 +259,7 @@ def fit_residualizer(X_train: pd.DataFrame) -> Residualizer:
         operating_columns=list(OPERATING_COLUMNS),
         residual_columns=list(RESIDUAL_COLUMNS),
         model=model,
-        n_fit_rows=int(len(normal)),
+        n_fit_rows=len(normal),
     )
 
 

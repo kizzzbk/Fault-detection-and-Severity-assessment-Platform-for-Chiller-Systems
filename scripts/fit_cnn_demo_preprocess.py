@@ -15,15 +15,17 @@ REPO = Path(__file__).resolve().parents[1]
 if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 
+from sklearn.linear_model import LinearRegression
+
 from chiller_fault_detection.config import DATA_DIR, DATASET_PARQUET, SHEET_NAME
 from chiller_fault_detection.data.public.load import add_derived_features
 from chiller_fault_detection.data.public.preprocess import (
     Residualizer,
     apply_residualizer,
     filter_kw_range,
+    partition_by_split,
     sort_within_files,
     time_splits,
-    partition_by_split,
 )
 from demo.cnn_schema import (
     CKPT_NAME,
@@ -34,7 +36,6 @@ from demo.cnn_schema import (
     CNN_SOURCE_FEATURE_COLUMNS,
 )
 from demo.pipeline import DEMO_DIR, MODELS_DIR
-from sklearn.linear_model import LinearRegression
 
 EXTRAS = ["T_suc", "Tsh_dis", "TEA", "PO_feed"]
 SAMPLE_PATH = DEMO_DIR / "sample.csv"
@@ -89,7 +90,7 @@ def _fit_residualizer(train: pd.DataFrame) -> Residualizer:
         operating_columns=list(CNN_OPERATING_COLUMNS),
         residual_columns=list(CNN_RESIDUAL_COLUMNS),
         model=model,
-        n_fit_rows=int(len(normal)),
+        n_fit_rows=len(normal),
     )
 
 

@@ -27,8 +27,8 @@ for p in (ROOT, ROOT / "src"):
     if str(p) not in sys.path:
         sys.path.insert(0, str(p))
 
-from demo.cnn_schema import CNN_FEATURE_COLUMNS  # noqa: E402
-from demo.pipeline import WINDOW, diagnose_frame, load_bundle  # noqa: E402
+from demo.cnn_schema import CNN_FEATURE_COLUMNS
+from demo.pipeline import WINDOW, diagnose_frame, load_bundle
 
 HERE = Path(__file__).resolve().parent
 DATA = HERE / "data"
@@ -79,12 +79,12 @@ def slider_config() -> list[dict]:
         span = max(abs(v - nominal) for v in vals) or 1.0
         lo, hi = (nominal - 0.25 * span, nominal + 1.2 * span) if direction > 0 else (nominal - 1.2 * span, nominal + 0.25 * span)
         out.append(
-            dict(
-                fault=fault, var=var, label=label, unit=unit, component=comp,
-                nominal=round(nominal, 2), min=round(lo, 2), max=round(hi, 2),
-                direction=direction,
-                levels={str(k): round(v, 2) for k, v in sorted(levels.items())},
-            )
+            {
+                "fault": fault, "var": var, "label": label, "unit": unit, "component": comp,
+                "nominal": round(nominal, 2), "min": round(lo, 2), "max": round(hi, 2),
+                "direction": direction,
+                "levels": {str(k): round(v, 2) for k, v in sorted(levels.items())},
+            }
         )
     return out
 
@@ -113,7 +113,7 @@ def _segment(fault: str, sev: int, n: int, rng: np.random.Generator) -> pd.DataF
 
 def build_stream(req: SimRequest) -> pd.DataFrame:
     rng = np.random.default_rng(req.seed)
-    n = int(round(req.hours * 3600 / DT_S))
+    n = round(req.hours * 3600 / DT_S)
     active = [(f, int(np.clip(s, 1, 4))) for f, s in req.faults.items() if f in FAULTS and s > 0]
     plan: list[tuple[str, int, int]] = []
     if not active:

@@ -1,8 +1,9 @@
 import json
-from pathlib import Path
+
 import numpy as np
 import pandas as pd
 import pytest
+
 from demo.cnn_schema import CNN_FEATURE_COLUMNS
 from webapp.server import DATA, FAULTS
 
@@ -31,7 +32,7 @@ def test_twin_library_schema_and_types(twin_df):
 
 def test_twin_library_fault_coverage(twin_df):
     unique_faults = set(twin_df["fault"].unique())
-    expected_faults = set(["normal", *FAULTS])
+    expected_faults = {"normal", *FAULTS}
     assert (
         expected_faults == unique_faults
     ), f"Dữ liệu thiếu loại lỗi! Hiện có: {unique_faults}"

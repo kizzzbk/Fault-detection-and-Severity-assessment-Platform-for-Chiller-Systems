@@ -1,12 +1,17 @@
 """Tests for model classification accuracy and real-time inference latency."""
 import time
+
 import numpy as np
-import pandas as pd
 import pytest
-from chiller_fault_detection.labels import ID_TO_LABEL
+
 from demo.cnn_schema import CNN_INPUT_CHANNELS
-from demo.pipeline import WINDOW, cut_windows, load_bundle, predict_windows, prepare_model_frame
+from demo.pipeline import (
+    WINDOW,
+    load_bundle,
+    predict_windows,
+)
 from webapp.server import DATA
+
 PARQUET_PATH = DATA / "twin_library.parquet"
 
 @pytest.fixture(scope="module")

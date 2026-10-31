@@ -60,7 +60,7 @@ def mask_patches(x, patch_len: int, patch_stride: int, mask_ratio: float = 0.4):
     if length < patch_len:
         raise ValueError(f"window {length} is shorter than patch_len {patch_len}")
     n_tok = (length - patch_len) // patch_stride + 1
-    n_mask = min(n_tok, max(1, int(round(n_tok * mask_ratio))))
+    n_mask = min(n_tok, max(1, round(n_tok * mask_ratio)))
     out = x.copy()
     for i in range(n_win):
         chosen = np.random.choice(n_tok, size=n_mask, replace=False)

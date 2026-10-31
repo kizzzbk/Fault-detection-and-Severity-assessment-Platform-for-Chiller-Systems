@@ -209,7 +209,7 @@ class UnitConverter:
 
     def convert(self, frame: pd.DataFrame) -> pd.DataFrame:
         out = frame.copy()
-        lookup = seliệulf._lookup(out.columns)
+        lookup = self._lookup(out.columns)
         for name in self.ABSOLUTE_TEMP_C:
             col = self._require(lookup, name)
             out[col] = pd.to_numeric(out[col], errors="coerce") * C_TO_F_SCALE + C_TO_F_OFFSET

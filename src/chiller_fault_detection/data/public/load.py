@@ -18,7 +18,7 @@ from __future__ import annotations
 import json
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 
 import pandas as pd
 
@@ -370,7 +370,7 @@ def load_dataset(
     df["severity_level"] = df["severity_level"].astype("int64")
     validate_dataset(df)
 
-    report.loaded_rows = int(len(df))
+    report.loaded_rows = len(df)
     report.fault_counts = {
         str(k): int(v) for k, v in df["fault"].value_counts().sort_index().items()
     }

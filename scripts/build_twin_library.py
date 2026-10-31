@@ -22,12 +22,22 @@ for p in (REPO, REPO / "src", REPO / "scripts"):
     if str(p) not in sys.path:
         sys.path.insert(0, str(p))
 
-from chiller_fault_detection.config import DATASET_PARQUET
-from chiller_fault_detection.data.public.preprocess import filter_kw_range, sort_within_files
-from demo.cnn_schema import CNN_FEATURE_COLUMNS
-from demo.pipeline import STRIDE, WINDOW, cut_windows, load_bundle, predict_windows, prepare_model_frame
-from chiller_fault_detection.labels import ID_TO_LABEL
 from fit_cnn_demo_preprocess import _attach_extras
+
+from chiller_fault_detection.config import DATASET_PARQUET
+from chiller_fault_detection.data.public.preprocess import (
+    filter_kw_range,
+    sort_within_files,
+)
+from chiller_fault_detection.labels import ID_TO_LABEL
+from demo.cnn_schema import CNN_FEATURE_COLUMNS
+from demo.pipeline import (
+    WINDOW,
+    cut_windows,
+    load_bundle,
+    predict_windows,
+    prepare_model_frame,
+)
 
 OUT_DIR = REPO / "webapp" / "data"
 BLOCK_ROWS = 1920  # 5h20' at 10 s/sample
@@ -47,7 +57,7 @@ def best_block(frame: pd.DataFrame, fault: str, bundle) -> tuple[pd.DataFrame, f
         if len(prepared) != len(group):
             continue
         windows, meta = cut_windows(prepared)
-        pred, proba = predict_windows(bundle["model"], windows, bundle["device"])
+        pred, _proba = predict_windows(bundle["model"], windows, bundle["device"])
         ok = np.array([ID_TO_LABEL[int(p)].value == fault for p in pred])
         # longest run of correct windows
         run_start, run_len, cur_s, cur_l = 0, 0, 0, 0
@@ -93,7 +103,7 @@ def main() -> None:
     blocks, anchors = [], {}
     for (fault, sev), part in frame.groupby(["fault", "severity_level"]):
         sev = int(sev)
-        block, score = best_block(part, fault, bundle)
+        block, _score = best_block(part, fault, bundle)
         if block is None:
             print(f"!! {fault}/{sev}: no correctly classified window, skipped")
             continue

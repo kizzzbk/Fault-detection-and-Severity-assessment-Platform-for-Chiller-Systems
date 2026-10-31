@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -13,7 +13,10 @@ import pandas as pd
 
 from chiller_fault_detection.config import KW_MAX, KW_MIN
 from chiller_fault_detection.data.public.load import add_derived_features
-from chiller_fault_detection.data.public.preprocess import Residualizer, apply_residualizer
+from chiller_fault_detection.data.public.preprocess import (
+    Residualizer,
+    apply_residualizer,
+)
 from chiller_fault_detection.labels import ID_TO_LABEL
 from chiller_fault_detection.models.model import base_Model
 from demo.cnn_schema import (
@@ -123,7 +126,7 @@ class Diagnosis:
 
 
 def format_duration(seconds: float) -> str:
-    total = max(0, int(round(seconds)))
+    total = max(0, round(seconds))
     hours, rem = divmod(total, 3600)
     minutes, secs = divmod(rem, 60)
     if hours and minutes:

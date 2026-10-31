@@ -42,3 +42,7 @@ demo = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.ruff.lint]
+select = ["E", "F"]
+ignore = ["E402", "F403", "E501"]

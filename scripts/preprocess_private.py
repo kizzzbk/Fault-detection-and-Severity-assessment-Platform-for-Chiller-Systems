@@ -15,7 +15,6 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from chiller_fault_detection.data.public.load import FEATURE_COLUMNS
 from chiller_fault_detection.data.private.preprocess_private import (
     DEFAULT_OUT,
     DEFAULT_SCHEMA,
@@ -25,6 +24,7 @@ from chiller_fault_detection.data.private.preprocess_private import (
     SchemaReader,
     UnitConverter,
 )
+from chiller_fault_detection.data.public.load import FEATURE_COLUMNS
 
 
 def main() -> None:

@@ -1,10 +1,11 @@
-import torch
 import numpy as np
+import torch
+
 
 class NTXentLoss(torch.nn.Module):
 
     def __init__(self, device, batch_size, temperature, use_cosine_similarity):
-        super(NTXentLoss, self).__init__()
+        super().__init__()
         self.batch_size = batch_size
         self.temperature = temperature
         self.device = device
@@ -24,7 +25,7 @@ class NTXentLoss(torch.nn.Module):
         diag = np.eye(2 * self.batch_size)
         l1 = np.eye((2 * self.batch_size), 2 * self.batch_size, k=-self.batch_size)
         l2 = np.eye((2 * self.batch_size), 2 * self.batch_size, k=self.batch_size)
-        mask = torch.from_numpy((diag + l1 + l2))
+        mask = torch.from_numpy(diag + l1 + l2)
         mask = (1 - mask).type(torch.bool)
         return mask.to(self.device)
 
