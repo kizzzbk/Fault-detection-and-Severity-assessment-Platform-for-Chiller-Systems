@@ -37,3 +37,12 @@ jobs:
           tags: |
             ${{ secrets.DOCKERHUB_USERNAME }}/chiller-fault-detection:latest
             ${{ secrets.DOCKERHUB_USERNAME }}/chiller-fault-detection:${{ github.sha }}
+      
+      - name: Update Docker Hub Description
+        uses: peter-evans/dockerhub-description@v4
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          repository: ${{ secrets.DOCKERHUB_USERNAME }}/chiller-fault-detection
+          readme-filepath: ./README.md
+          short-description: "Edge AI Fault Detection & Diagnostics Platform for Chiller Systems"
