@@ -1,7 +1,8 @@
 # Chiller Fault Detection & Severity Assessment Platform (FDD)
 
 > **Industrial Chiller Fault Detection and Diagnosis (FDD) & Digital Twin Platform powered by Contextualized Contrastive Semi-Supervised Learning (CA-TCC / TS-TCC), featuring 1D-CNN and Meta AI Pretrained Vision Transformer (DINOv3) Encoders on the ASHRAE RP-1043 Benchmark.**
-
+>
+> **Project Demo Link: https://fault-detection-and-severity-assessment.onrender.com/**
 ---
 
 ## Table of Contents
