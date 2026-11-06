@@ -3,6 +3,7 @@
 > **Industrial Chiller Fault Detection and Diagnosis (FDD) & Digital Twin Platform powered by Contextualized Contrastive Semi-Supervised Learning (CA-TCC / TS-TCC), featuring 1D-CNN and Meta AI Pretrained Vision Transformer (DINOv3) Encoders on the ASHRAE RP-1043 Benchmark.**
 >
 > **Project Demo Link: https://fault-detection-and-severity-assessment.onrender.com/**
+> ![demo_gif](./docs/demo.gif)
 ---
 
 ## Table of Contents
