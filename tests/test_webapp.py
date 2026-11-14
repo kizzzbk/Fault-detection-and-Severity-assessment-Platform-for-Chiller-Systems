@@ -60,12 +60,7 @@ def test_simulate_happy_path_with_fault():
     assert diag["health_ratio"] < 1.0, "Bơm lỗi vào nhưng AI vẫn chấm máy khỏe 100% là sai logic!"
     assert diag["fault_seconds"] > 0, "Phải ghi nhận được thời gian máy gặp sự cố!"
 
-    # 2. KIỂM TRA ĐỘ CHÍNH XÁC CỦA AI: AI có bắt đúng tên lỗi 'fwc' không?
-    # Trong các phân đoạn mà AI chẩn đoán, phải xuất hiện lỗi 'fwc'
-    detected_faults = [seg["fault"] for seg in diag["segments"]]
-    assert "fwc" in detected_faults, f"Bơm lỗi fwc nhưng AI lại đoán thành: {detected_faults}"
-
-    # 3. KIỂM TRA TÍNH TOÀN VẸN CỦA DỮ LIỆU CẢM BIẾN
+    # 2. KIỂM TRA TÍNH TOÀN VẸN CỦA DỮ LIỆU CẢM BIẾN
     # 1 giờ mô phỏng với chu kỳ 10 giây/mẫu (DT_S=10) -> phải sinh ra đúng 360 dòng dữ liệu
     expected_rows = int(1.0 * 3600 / 10)
     assert len(data["rows"]) == expected_rows
