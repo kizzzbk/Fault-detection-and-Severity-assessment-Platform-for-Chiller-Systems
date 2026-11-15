@@ -44,7 +44,7 @@ def test_simulate_baseline_normal():
     data = response.json()
     assert data["scenario"][0] == "normal"
 
-def test_simulate_happy_path_with_fault():
+def test_simulate_happy_path_witesth_fault():
     """Kiểm tra logic chẩn đoán thực sự của AI khi bơm lỗi fwc."""
     payload = {
         "hours": 1.0,               # Chạy mô phỏng 1 giờ (nhẹ và nhanh nhất)

@@ -1,6 +1,9 @@
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 import pytest
+from sklearn.metrics import accuracy_score, f1_score
 
 from demo.cnn_schema import (
     CNN_FEATURE_COLUMNS,
@@ -8,12 +11,19 @@ from demo.cnn_schema import (
     CNN_MODEL_FEATURE_COLUMNS,
 )
 from demo.pipeline import (
+    STRIDE,
     WINDOW,
     cut_windows,
     diagnose_frame,
     load_bundle,
     predict_windows,
+    prepare_model_frame,
 )
+
+TEST_DATA_DIR = Path(__file__).resolve().parent / "data"
+TEST_SPLIT_PATH = TEST_DATA_DIR / "test_split.parquet"
+MIN_ACCURACY = 0.5095
+MIN_MACRO_F1 = 0.48
 
 
 @pytest.fixture(scope="module")
@@ -66,3 +76,38 @@ def test_diagnose_frame_end_to_end(bundle):
     assert diag.t_span_s > 0
     assert isinstance(diag.segments, list)
     assert isinstance(diag.windows, list)
+
+
+def test_tc06_model_quality_gate(bundle):
+    """TC06: Kiểm tra chất lượng mô hình (Quality Gate) trên tập test chuẩn cố định."""
+    assert TEST_SPLIT_PATH.is_file(), f"Không tìm thấy tập test chuẩn tại {TEST_SPLIT_PATH}"
+
+    test_df = pd.read_parquet(TEST_SPLIT_PATH)
+    prepared, _ = prepare_model_frame(test_df, bundle["residualizer"], bundle["scaler"])
+
+    xs: list[np.ndarray] = []
+    ys: list[int] = []
+    for _, group in prepared.groupby("source_file", sort=False):
+        values = group.loc[:, CNN_MODEL_FEATURE_COLUMNS].to_numpy(dtype=np.float32)
+        label = int(group["fault_id"].iloc[0])
+        if len(values) < WINDOW:
+            continue
+        for start in range(0, len(values) - WINDOW + 1, STRIDE):
+            xs.append(values[start : start + WINDOW].T)
+            ys.append(label)
+
+    x_test = np.stack(xs)
+    y_true = np.asarray(ys, dtype=np.int64)
+
+    y_pred, _ = predict_windows(bundle["model"], x_test, bundle["device"])
+
+    acc = float(accuracy_score(y_true, y_pred))
+    macro_f1 = float(f1_score(y_true, y_pred, average="macro", zero_division=0))
+
+    assert acc >= MIN_ACCURACY, (
+        f"Quality Gate thất bại: Accuracy đạt {acc:.4f}, thấp hơn ngưỡng tối thiểu {MIN_ACCURACY:.4f}"
+    )
+    assert macro_f1 >= MIN_MACRO_F1, (
+        f"Quality Gate thất bại: Macro F1 đạt {macro_f1:.4f}, thấp hơn ngưỡng tối thiểu {MIN_MACRO_F1:.4f}"
+    )
+
